@@ -1,7 +1,7 @@
-"""Shared Streamlit building blocks for both agents (imported lazily - Streamlit is not needed for the CLI)."""
+"""Shared Streamlit components for both agents (imported lazily - Streamlit is not needed for the CLI)."""
 from __future__ import annotations
 
-import json
+import html
 import xml.etree.ElementTree as ET
 from typing import Any
 
@@ -9,76 +9,146 @@ import pandas as pd
 import streamlit as st
 
 from . import report
+from .brand import Agent
 from .compare import RecordResult
 from .engine import RunResult
 
-NAVY, GREEN, BLUE, ORANGE, RED, MUTED = "#16233B", "#2E7D5B", "#3B6EA5", "#C97A2B", "#C0392B", "#6B7280"
+INK, MUTED, LINE, CANVAS = "#16203A", "#667289", "#DDE3EC", "#F4F6FA"
+GREEN, GREEN_BG = "#177A4F", "#E6F4EC"
+SLATE, SLATE_BG = "#44607F", "#E8EEF5"
+RED, RED_BG = "#B8322A", "#FBE9E7"
 
-VERDICT = {
-    "MATCH": ("✅", "Match", GREEN, "#EAF5EF"),
-    "EXPECTED_DIFFERENCE": ("🔷", "Expected difference", BLUE, "#EAF1F8"),
-    "MISMATCH": ("❌", "Mismatch", RED, "#FBEAEA"),
+VERDICT = {   # icon + word + colour, so meaning never depends on colour alone
+    "MATCH": ("✓", "Exact match", GREEN, GREEN_BG),
+    "EXPECTED_DIFFERENCE": ("≈", "Explained difference", SLATE, SLATE_BG),
+    "MISMATCH": ("✕", "Mismatch", RED, RED_BG),
 }
-RULE_STATUS = {"VALIDATED": "✅ Validated", "INVALIDATED": "❌ Invalidated", "UNTESTED": "◻️ Not exercised"}
+RULE_STATUS = {"VALIDATED": "✓ Validated", "INVALIDATED": "✕ Invalidated", "UNTESTED": "– Not exercised"}
 CATEGORY_LABEL = {
-    "IMPLEMENTATION_DEFECT": "Implementation defect",
-    "ROUNDING_MODE": "Rounding mode",
-    "REASON_CODE": "Reason-code mapping",
-    "NEW_FEATURE_DEFECT": "New feature misbehaves",
-    "UNEXPLAINED": "Unexplained difference",
-    "EXPECTED_ENHANCEMENT": "Expected (new feature)",
+    "IMPLEMENTATION_DEFECT": "Implementation defect", "ROUNDING_MODE": "Rounding mode",
+    "REASON_CODE": "Reason-code mapping", "NEW_FEATURE_DEFECT": "New feature misbehaves",
+    "UNEXPLAINED": "Unexplained difference", "EXPECTED_ENHANCEMENT": "Expected (new feature)",
 }
 
-CSS = f"""
+
+def esc(s: Any) -> str:
+    return html.escape(str(s))
+
+
+def css(agent: Agent) -> str:
+    return f"""
 <style>
-.block-container {{ padding-top: 3.6rem; max-width: 1240px; }}
-#MainMenu, footer {{ visibility: hidden; }}
-.wp-hero {{ background:#fff; border:1px solid #e6e8eb; border-left:5px solid {NAVY}; border-radius:14px;
-  padding:1.4rem 1.8rem; margin-bottom:1.1rem; box-shadow:0 2px 12px rgba(20,36,58,.06); }}
-.wp-hero .tag {{ font:600 .72rem/1 ui-monospace,monospace; letter-spacing:.14em; color:{GREEN}; text-transform:uppercase; }}
-.wp-hero h1 {{ margin:.35rem 0 .3rem; font-size:1.55rem; font-weight:800; color:{NAVY}; }}
-.wp-hero p {{ margin:0; color:#4a5568; font-size:.95rem; line-height:1.5; }}
-.wp-kpi {{ background:#fff; border:1px solid #eaecef; border-top:5px solid var(--accent); border-radius:14px;
-  padding:.9rem 1.1rem .8rem; box-shadow:0 2px 10px rgba(20,36,58,.05); }}
-.wp-kpi .v {{ font-size:1.9rem; font-weight:800; color:{NAVY}; line-height:1.1; }}
-.wp-kpi .l {{ font-size:.82rem; color:{MUTED}; margin-top:.15rem; }}
-.wp-pill {{ display:inline-block; padding:.28rem .75rem; border-radius:999px; font-weight:700; font-size:.78rem; }}
-.wp-note {{ background:#f3f6fa; border:1px solid #e1e7ef; border-radius:10px; padding:.7rem 1rem; color:#33415c; font-size:.9rem; }}
-.wp-flow {{ display:flex; gap:.6rem; flex-wrap:wrap; align-items:stretch; margin:.4rem 0 1rem; }}
-.wp-step {{ flex:1 1 180px; background:#fff; border:1px solid #e6e8eb; border-radius:12px; padding:.8rem .95rem; }}
-.wp-step b {{ color:{NAVY}; }} .wp-step span {{ color:{MUTED}; font-size:.85rem; display:block; margin-top:.2rem; }}
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+:root {{ --accent:{agent.accent}; --accent-soft:{agent.accent_soft}; --ink:{INK}; --muted:{MUTED}; --line:{LINE}; }}
+html, body, .stApp, .stMarkdown, p, label, input, textarea, button {{ font-family:'IBM Plex Sans',system-ui,sans-serif; }}
+.stApp {{ background:{CANVAS}; }}
+#MainMenu, footer, [data-testid="stDecoration"] {{ visibility:hidden; }}
+.block-container {{ padding:2.6rem 2.4rem 4rem; max-width:1280px; }}
+h1,h2,h3 {{ color:var(--ink); letter-spacing:-.01em; }}
+
+/* sidebar */
+[data-testid="stSidebar"] {{ background:{agent.sidebar}; }}
+[data-testid="stSidebar"] * {{ color:#D6DEEF; }}
+[data-testid="stSidebarNav"]::before {{ content:"{agent.glyph}  {agent.name}"; display:block; padding:1.1rem 1.2rem .5rem;
+   font-weight:700; font-size:1.25rem; color:#fff; letter-spacing:-.01em; }}
+[data-testid="stSidebarNav"] a {{ border-radius:8px; margin:1px 8px; padding:.3rem .7rem; }}
+[data-testid="stSidebarNav"] a:hover {{ background:{agent.sidebar_raised}; }}
+[data-testid="stSidebarNav"] a[aria-current="page"] {{ background:{agent.sidebar_raised}; box-shadow:inset 3px 0 0 #fff; }}
+[data-testid="stSidebarNav"] a[aria-current="page"] span {{ color:#fff; font-weight:600; }}
+[data-testid="stSidebarNavSeparator"] {{ display:none; }}
+.sb-card {{ background:{agent.sidebar_raised}; border-radius:10px; padding:.75rem .9rem; margin:.4rem .6rem; font-size:.84rem; line-height:1.45; }}
+.sb-card b {{ color:#fff; }} .sb-card .dim {{ color:#9FB0D0; }}
+.sb-gate {{ display:inline-block; padding:.12rem .55rem; border-radius:999px; font-weight:700; font-size:.74rem; }}
+
+/* page header */
+.pg-head {{ margin-bottom:1.1rem; }}
+.pg-head h1 {{ font-size:1.65rem; font-weight:700; margin:0 0 .15rem; padding:0; }}
+.pg-head p {{ margin:0; color:var(--muted); font-size:.95rem; max-width:62ch; line-height:1.5; }}
+
+/* release gate: the one loud element */
+.gate {{ display:flex; align-items:center; gap:1.2rem; border-radius:14px; padding:1.1rem 1.5rem; margin:.2rem 0 1rem; border:1px solid; }}
+.gate .big {{ font-size:2.1rem; font-weight:700; letter-spacing:-.02em; line-height:1; min-width:6.2rem; }}
+.gate .why {{ font-size:.95rem; line-height:1.5; }} .gate .why b {{ font-weight:600; }}
+.gate.go {{ background:{GREEN_BG}; border-color:#A9D8BF; color:#0E4D31; }}
+.gate.nogo {{ background:{RED_BG}; border-color:#EDB5AE; color:#7C1F19; }}
+
+/* tiles */
+.tile {{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem .75rem; height:100%; }}
+.tile .v {{ font-size:1.75rem; font-weight:600; color:var(--ink); line-height:1.15; }}
+.tile .l {{ font-size:.84rem; color:var(--muted); margin-top:.1rem; }}
+.tile .d {{ font-size:.8rem; margin-top:.25rem; font-weight:500; }}
+.tile.bad .v {{ color:{RED}; }}
+.d.up {{ color:{GREEN}; }} .d.down {{ color:{RED}; }} .d.flat {{ color:var(--muted); }}
+
+.chip {{ display:inline-block; padding:.12rem .6rem; border-radius:999px; font-size:.78rem; font-weight:600; border:1px solid; white-space:nowrap; }}
+.panel {{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:1rem 1.2rem; }}
+.empty {{ background:#fff; border:1px dashed #B9C3D3; border-radius:12px; padding:2rem 2rem; text-align:left; max-width:640px; }}
+.empty h3 {{ margin:0 0 .3rem; font-size:1.15rem; }} .empty p {{ margin:0; color:var(--muted); line-height:1.55; }}
+.step {{ display:inline-block; padding:.28rem .7rem; margin:0 .25rem .35rem 0; border-radius:8px; font-size:.84rem; font-weight:600; border:1px solid var(--line); background:#fff; color:var(--muted); }}
+.step.done {{ background:{GREEN_BG}; border-color:#A9D8BF; color:#0E4D31; }}
+.step.fail {{ background:{RED_BG}; border-color:#EDB5AE; color:#7C1F19; }}
+.step.now {{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }}
+
+/* primary buttons carry the agent's accent */
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {{ background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }}
+.stButton > button, .stDownloadButton > button {{ border-radius:8px; }}
+[data-testid="stSidebar"] .stButton > button {{ background:transparent; border-color:#47598A; color:#fff; }}
+div[data-baseweb="tab-list"] {{ gap:.4rem; }}
+@media (max-width:760px) {{ .block-container {{ padding:1.6rem 1rem 3rem; }} .gate {{ flex-direction:column; align-items:flex-start; gap:.4rem; }} }}
 </style>
 """
 
 
-def inject_css() -> None:
-    st.markdown(CSS, unsafe_allow_html=True)
+def inject_css(agent: Agent) -> None:
+    st.markdown(css(agent), unsafe_allow_html=True)
 
 
-def hero(tag: str, title: str, subtitle: str) -> None:
-    st.markdown(f'<div class="wp-hero"><div class="tag">{tag}</div><h1>{title}</h1><p>{subtitle}</p></div>',
-                unsafe_allow_html=True)
+def page_header(title: str, subtitle: str = "") -> None:
+    sub = f"<p>{esc(subtitle)}</p>" if subtitle else ""
+    st.markdown(f'<div class="pg-head"><h1>{esc(title)}</h1>{sub}</div>', unsafe_allow_html=True)
 
 
-def flow(steps: list[tuple[str, str]]) -> None:
-    html = "".join(f'<div class="wp-step"><b>{i}. {t}</b><span>{d}</span></div>' for i, (t, d) in enumerate(steps, 1))
-    st.markdown(f'<div class="wp-flow">{html}</div>', unsafe_allow_html=True)
-
-
-def pill(verdict: str) -> str:
+def chip(verdict: str) -> str:
     icon, label, fg, bg = VERDICT[verdict]
-    return f'<span class="wp-pill" style="background:{bg};color:{fg};border:1px solid {fg}">{icon} {label}</span>'
+    return f'<span class="chip" style="background:{bg};color:{fg};border-color:{fg}55">{icon} {label}</span>'
 
 
-def kpi_row(counts: dict[str, Any]) -> None:
-    tiles = [("Payments compared", counts["total"], NAVY), ("Exact match", counts["match"], GREEN),
-             ("Expected differences", counts["expected"], BLUE), ("Mismatches", counts["mismatch"], RED),
-             ("Parity", f"{counts['parity_pct']}%", GREEN if counts["mismatch"] == 0 else ORANGE)]
-    for col, (label, val, accent) in zip(st.columns(len(tiles)), tiles):
-        col.markdown(f'<div class="wp-kpi" style="--accent:{accent}"><div class="v">{val}</div><div class="l">{label}</div></div>',
-                     unsafe_allow_html=True)
-    st.caption("Parity = exact matches + differences explained by a documented new feature. "
-               "Expected differences are re-derived independently, never taken on trust from the new code.")
+def empty_state(title: str, text: str) -> None:
+    st.markdown(f'<div class="empty"><h3>{esc(title)}</h3><p>{esc(text)}</p></div>', unsafe_allow_html=True)
+
+
+def gate_banner(passed: bool, reasons: list[str], thresholds: dict, counts: dict) -> None:
+    if passed:
+        why = (f"<b>Safe to release on this evidence.</b> {counts['mismatch']} mismatches and {counts['parity_pct']}% parity, "
+               f"within the gate of at most {thresholds['max_mismatches']} mismatches and at least {thresholds['min_parity_pct']}% parity.")
+    else:
+        why = "<b>Not ready.</b> " + " ".join(esc(r[:1].upper() + r[1:]) + "." for r in reasons)
+    st.markdown(f'<div class="gate {"go" if passed else "nogo"}"><div class="big">{"GO" if passed else "NO-GO"}</div>'
+                f'<div class="why">{why}</div></div>', unsafe_allow_html=True)
+
+
+def _delta(new: float, old: float | None, good_up: bool | None, fmt: str = "{:+g}") -> str:
+    if old is None:
+        return ""
+    d = new - old
+    if d == 0 or good_up is None:
+        cls = "flat"
+    else:
+        cls = "up" if (d > 0) == good_up else "down"
+    arrow = "▲" if d > 0 else "▼" if d < 0 else "•"
+    return f'<div class="d {cls}">{arrow} {fmt.format(round(d, 2))} vs baseline</div>' if d else '<div class="d flat">• same as baseline</div>'
+
+
+def kpi_tiles(counts: dict[str, Any], base: dict[str, Any] | None = None) -> None:
+    b = base or {}
+    spec = [("Payments compared", counts["total"], "total", None, ""),
+            ("Exact match", counts["match"], "match", True, ""),
+            ("Explained differences", counts["expected"], "expected", None, ""),
+            ("Mismatches", counts["mismatch"], "mismatch", False, "bad" if counts["mismatch"] else ""),
+            ("Parity", f"{counts['parity_pct']}%", "parity_pct", True, "")]
+    for col, (label, val, key, good_up, cls) in zip(st.columns(len(spec)), spec):
+        d = _delta(counts[key], b.get(key), good_up) if base else ""
+        col.markdown(f'<div class="tile {cls}"><div class="v">{val}</div><div class="l">{label}</div>{d}</div>', unsafe_allow_html=True)
 
 
 def pretty_xml(xml: str) -> str:
@@ -90,113 +160,93 @@ def pretty_xml(xml: str) -> str:
         return xml
 
 
-def rules_df(run: RunResult) -> pd.DataFrame:
+def rules_df(rule_report: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame([{
-        "Rule": r["id"], "What it checks": r["title"], "Old field": r["old_ref"], "New field": r["new_ref"],
-        "Checked": r["checked"], "Match": r["match"], "Expected": r["expected"], "Mismatch": r["mismatch"],
-        "Verdict": RULE_STATUS[r["status"]]} for r in run.rule_report])
+        "Rule": r["id"] + (" (custom)" if r.get("custom") else ""), "What it checks": r["title"],
+        "Old field": r["old_ref"], "New field": r["new_ref"], "Checked": r["checked"], "Match": r["match"],
+        "Explained": r["expected"], "Mismatch": r["mismatch"], "Result": RULE_STATUS[r["status"]]} for r in rule_report])
 
 
 def results_df(results: list[RecordResult]) -> pd.DataFrame:
     rows = []
     for r in results:
         icon, label, _, _ = VERDICT[r.verdict]
-        rows.append({"Payment": r.request_id, "Verdict": f"{icon} {label}",
-                     "Old": r.old_response.get("status", ""), "New": r.new_response.get("status", ""),
-                     "Rules": ", ".join(sorted({c.rule_id for c in (r.mismatches or r.expected)})),
-                     "Why": " | ".join(c.explanation for c in (r.mismatches or r.expected))[:240]})
+        bad = r.mismatches or r.expected
+        rows.append({"Payment": r.request_id, "Verdict": f"{icon} {label}", "Currency": r.request.get("currency", ""),
+                     "Amount": r.request.get("amount", ""), "Old": r.old_response.get("status", ""),
+                     "New": r.new_response.get("status", ""), "Rules": ", ".join(sorted({c.rule_id for c in bad})),
+                     "Why": " | ".join(c.explanation for c in bad)[:240]})
     return pd.DataFrame(rows)
 
 
 def checks_df(r: RecordResult) -> pd.DataFrame:
-    rows = []
-    for c in r.checks:
-        rows.append({"Rule": c.rule_id, "Check": c.title, "Old": c.old, "New": c.new,
-                     "Result": {"MATCH": "✅ Match", "EXPECTED": "🔷 Expected", "MISMATCH": "❌ Mismatch"}[c.status],
-                     "Why": c.explanation})
-    return pd.DataFrame(rows)
+    sym = {"MATCH": "✓ Match", "EXPECTED": "≈ Explained", "MISMATCH": "✕ Mismatch"}
+    return pd.DataFrame([{"Rule": c.rule_id, "Check": c.title, "Old": c.old, "New": c.new, "Result": sym[c.status], "Why": c.explanation}
+                         for c in r.checks])
+
+
+def workflow_stepper(history: list[dict[str, Any]]) -> None:
+    if not history:
+        return
+    states = [h.get("state", "?") for h in history]
+    html_ = "".join(f'<span class="step {"fail" if s == "REJECTED" else "done" if s in ("ACCEPTED",) else "now" if i == len(states) - 1 else ""}">{esc(s)}</span>'
+                    + ("<span style='color:#9AA6BC'>›</span> " if i < len(states) - 1 else "") for i, s in enumerate(states))
+    st.markdown(html_, unsafe_allow_html=True)
 
 
 def inspector(r: RecordResult, key: str) -> None:
-    """Side-by-side view of ONE payment: request, old response, new response, and the rule-by-rule result."""
-    st.markdown(f"**{r.request_id}** &nbsp; {pill(r.verdict)}", unsafe_allow_html=True)
+    """Everything about ONE payment: verdict, why, side-by-side responses, workflow, pacs.008."""
+    st.markdown(f"#### {esc(r.request_id)} &nbsp; {chip(r.verdict)}", unsafe_allow_html=True)
     for c in r.mismatches + r.expected:
-        label = "❌" if c.status == "MISMATCH" else "🔷"
-        st.markdown(f"{label} **{c.rule_id} · {c.title}** — {c.explanation}")
-        if c.fix:
-            st.caption(f"Suggested fix: {c.fix}")
-    st.dataframe(checks_df(r), hide_index=True, width="stretch",
-                 column_config={"Why": st.column_config.TextColumn("Why", width="large")})
-    a, b, c = st.columns(3)
-    a.markdown("**Request**")
-    a.json(r.request, expanded=False)
-    b.markdown("**Old response**")
-    b.json(r.old_response, expanded=False)
-    c.markdown("**New response**")
-    c.json({k: v for k, v in r.new_response.items() if k != "pacs008"}, expanded=False)
+        (st.error if c.status == "MISMATCH" else st.info)(f"**{c.rule_id} · {c.title}** — {c.explanation}"
+                                                           + (f"\n\nSuggested fix: {c.fix}" if c.fix else ""))
+    if r.verdict == "MATCH":
+        st.success("Every applicable rule agrees between old and new.")
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Old response**")
+        st.json(r.old_response, expanded=2)
+    with right:
+        st.markdown("**New response**")
+        st.json({k: v for k, v in r.new_response.items() if k != "pacs008"}, expanded=2)
+    st.markdown("**Rule by rule**")
+    st.dataframe(checks_df(r), hide_index=True, width="stretch", column_config={"Why": st.column_config.TextColumn("Why", width="large")})
     wf = (r.new_response.get("workflow") or {}).get("history") or []
     if wf:
-        st.markdown("**New workflow audit trail**")
-        st.dataframe(pd.DataFrame(wf).rename(columns=str.title), hide_index=True, width="stretch")
+        st.markdown("**New workflow path**")
+        workflow_stepper(wf)
     xml = r.new_response.get("pacs008")
+    with st.expander("Request sent to both"):
+        st.json(r.request, expanded=2)
     if xml:
-        with st.expander("ISO 20022 pacs.008 message produced by the new code"):
+        with st.expander("ISO 20022 pacs.008 message from the new code"):
+            st.download_button("Download XML", xml, f"{r.request_id}.pacs008.xml", "application/xml", key=f"{key}_xml")
             st.code(pretty_xml(xml), language="xml")
 
 
-def patterns_view(run: RunResult) -> None:
-    if not run.patterns:
-        st.success("No mismatches. Every difference between old and new is an explained, documented one.")
+def patterns_view(patterns: list[dict[str, Any]], mismatches: int) -> None:
+    if not patterns:
+        st.success("No mismatches. Every difference between old and new is a documented, independently verified one.")
         return
-    st.caption(f"{run.counts['mismatch']} mismatching payment(s) collapse into {len(run.patterns)} distinct pattern(s). "
-               "Fix the pattern, not the payments.")
-    for p in run.patterns:
+    st.caption(f"{mismatches} mismatching payment(s) collapse into {len(patterns)} pattern(s). Fix the pattern, not the payments.")
+    for p in patterns:
         with st.container(border=True):
-            st.markdown(f"**{p['pattern_id']} · {CATEGORY_LABEL.get(p['category'], p['category'])}** — "
-                        f"{p['count']} payment(s) · rules {', '.join(p['rules'])}")
+            st.markdown(f"**{p['pattern_id']} · {CATEGORY_LABEL.get(p['category'], p['category'])}** &nbsp; "
+                        f"<span class='chip' style='background:{RED_BG};color:{RED};border-color:{RED}55'>{p['count']} payments</span> "
+                        f"&nbsp; rules {', '.join(p['rules'])}", unsafe_allow_html=True)
             st.write(p["explanation"])
             if p["fix"]:
                 st.markdown(f"**Suggested fix:** {p['fix']}")
-            st.caption("Examples: " + ", ".join(p["examples"]))
+            st.caption("Examples: " + ", ".join(p["examples"][:6]))
 
 
-def trace_view(run: RunResult) -> None:
+def trace_table(run: RunResult) -> None:
     st.dataframe(pd.DataFrame([{"Step": s.name, "Seconds": round(s.seconds, 3), "Detail": s.detail} for s in run.trace]),
                  hide_index=True, width="stretch")
-    n, rep = run.counts["total"], run.meta.get("replay_seconds")
-    if rep and n:
-        st.caption(f"Throughput: {n / max(rep, 1e-9):,.0f} payments/second through the new code.")
 
 
-def downloads(run: RunResult, stem: str) -> None:
+def downloads(run: RunResult, stem: str, key: str) -> None:
     a, b, c = st.columns(3)
-    a.download_button("⬇ HTML report", report.to_html(run), f"{stem}.html", "text/html", width="stretch")
-    b.download_button("⬇ CSV (one row per payment)", report.to_csv(run), f"{stem}.csv", "text/csv", width="stretch")
-    c.download_button("⬇ JSON (full detail)", report.to_json(run), f"{stem}.json", "application/json", width="stretch")
-
-
-def render_run(run: RunResult, key: str, stem: str) -> None:
-    """The full result view: KPIs, then rule-by-rule / patterns / payments / trace+export."""
-    kpi_row(run.counts)
-    t1, t2, t3, t4 = st.tabs(["Rule-by-rule verdict", "Mismatch patterns", "Payments", "Run trace & export"])
-    with t1:
-        st.dataframe(rules_df(run), hide_index=True, width="stretch", height=36 + 35 * len(run.rule_report))
-        st.caption("Mapping rules (M-xxx) must be preserved from old to new. New-feature rules (N-xxx) either explain "
-                   "an expected difference or verify that the new behaviour is actually correct.")
-    with t2:
-        patterns_view(run)
-    with t3:
-        show = st.multiselect("Show", ["MISMATCH", "EXPECTED_DIFFERENCE", "MATCH"], default=["MISMATCH", "EXPECTED_DIFFERENCE"],
-                              format_func=lambda v: VERDICT[v][1], key=f"{key}_filter")
-        query = st.text_input("Filter by payment id", key=f"{key}_q").strip().upper()
-        rows = [r for r in run.results if r.verdict in show and query in r.request_id.upper()]
-        st.caption(f"{len(rows)} payment(s)")
-        if rows:
-            st.dataframe(results_df(rows), hide_index=True, width="stretch", height=300,
-                         column_config={"Why": st.column_config.TextColumn("Why", width="large")})
-            pick = st.selectbox("Inspect a payment", [r.request_id for r in rows[:2000]], key=f"{key}_pick")
-            inspector(next(r for r in rows if r.request_id == pick), key)
-    with t4:
-        trace_view(run)
-        downloads(run, stem)
-        st.json({k: v for k, v in run.meta.items()}, expanded=False)
+    a.download_button("Download HTML report", report.to_html(run), f"{stem}.html", "text/html", width="stretch", key=f"{key}_h")
+    b.download_button("Download CSV", report.to_csv(run), f"{stem}.csv", "text/csv", width="stretch", key=f"{key}_c")
+    c.download_button("Download JSON", report.to_json(run), f"{stem}.json", "application/json", width="stretch", key=f"{key}_j")

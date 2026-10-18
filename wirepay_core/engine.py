@@ -12,6 +12,14 @@ from .compare import (CAT_UNEXPLAINED, EXPECTED, MATCH, MISMATCH, Check, RecordR
 from .config import Spec
 
 Progress = Callable[[str], None]
+Counter_cb = Callable[[str, int, int], None]      # (phase, done, total)
+
+
+def _call(adapter: Adapter, requests: list[dict], phase: str, on_count: Counter_cb | None) -> list[dict]:
+    """Run an adapter, forwarding per-request progress if the caller wants it."""
+    if on_count is None:
+        return adapter.run(requests)
+    return adapter.run(requests, on_progress=lambda d, t: on_count(phase, d, t))
 
 
 @dataclass
@@ -50,7 +58,8 @@ def _rule_report(results: list[RecordResult], spec: Spec) -> list[dict[str, Any]
             status = "UNTESTED" if checked == 0 else ("INVALIDATED" if t[MISMATCH] else "VALIDATED")
             rows.append({"id": it["id"], "kind": kind, "title": it["title"], "checked": checked,
                          "match": t[MATCH], "expected": t[EXPECTED], "mismatch": t[MISMATCH], "status": status,
-                         "old_ref": it.get("old_ref", ""), "new_ref": it.get("new_ref", ""), "note": it.get("note", "")})
+                         "old_ref": it.get("old_ref", ""), "new_ref": it.get("new_ref", ""), "note": it.get("note", ""),
+                         "custom": bool(it.get("custom"))})
     return rows
 
 
@@ -98,7 +107,8 @@ def _finish(mode: str, results, trace, spec: Spec, meta) -> RunResult:
 
 
 def run_replay(records: list[dict[str, Any]], new_adapter: Adapter, spec: Spec,
-               progress: Progress | None = None, meta: dict | None = None) -> RunResult:
+               progress: Progress | None = None, meta: dict | None = None,
+               on_count: Counter_cb | None = None) -> RunResult:
     """AGENT 1. `records` = [{"request": {...}, "response": {...}}] captured from the running OLD system."""
     say = progress or (lambda _m: None)
     trace: list[StepTrace] = []
@@ -108,7 +118,7 @@ def run_replay(records: list[dict[str, Any]], new_adapter: Adapter, spec: Spec,
 
     say("Replaying recorded requests through the new implementation…")
     t = time.perf_counter()
-    new = new_adapter.run(requests)
+    new = _call(new_adapter, requests, "new", on_count)
     dt = time.perf_counter() - t
     trace.append(StepTrace("Replay through new code", dt, f"{len(new)} responses from {new_adapter.describe()}"))
 
@@ -120,19 +130,20 @@ def run_replay(records: list[dict[str, Any]], new_adapter: Adapter, spec: Spec,
 
 
 def run_dual(requests: list[dict[str, Any]], old_adapter: Adapter, new_adapter: Adapter, spec: Spec,
-             progress: Progress | None = None, meta: dict | None = None) -> RunResult:
+             progress: Progress | None = None, meta: dict | None = None,
+             on_count: Counter_cb | None = None) -> RunResult:
     """AGENT 2. The SAME requests are sent to both implementations at the same time."""
     say = progress or (lambda _m: None)
     trace: list[StepTrace] = [StepTrace("Prepare identical requests", 0.0, f"{len(requests)} request(s)")]
 
     say("Sending the requests to the old implementation…")
     t = time.perf_counter()
-    old = old_adapter.run(requests)
+    old = _call(old_adapter, requests, "old", on_count)
     trace.append(StepTrace("Run old code", time.perf_counter() - t, old_adapter.describe()))
 
     say("Sending the same requests to the new implementation…")
     t = time.perf_counter()
-    new = new_adapter.run(requests)
+    new = _call(new_adapter, requests, "new", on_count)
     trace.append(StepTrace("Run new code", time.perf_counter() - t, new_adapter.describe()))
 
     say("Comparing responses…")

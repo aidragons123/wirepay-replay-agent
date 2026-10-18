@@ -28,14 +28,24 @@ class Spec:
         return next((f for f in self.new_features if f["id"] == fid), None)
 
 
-def load_spec(path: str | Path | None = None) -> Spec:
+REQUIRED_RULE_KEYS = {"id", "title", "field", "compare", "applies"}
+
+
+def load_spec(path: str | Path | None = None, extra_rules: list[dict[str, Any]] | None = None) -> Spec:
+    """Load the mapping spec. `extra_rules` are user-added (custom) rules appended after the built-in ones."""
     p = Path(path) if path else DEFAULT_SPEC
     raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    custom = []
+    for r in extra_rules or []:
+        missing = REQUIRED_RULE_KEYS - r.keys()
+        if missing:
+            raise ValueError(f"custom rule {r.get('id', '?')} is missing {sorted(missing)}")
+        custom.append({**r, "custom": True})
     return Spec(
         decision_map=raw["decision_map"],
         reason_code_map=raw["reason_code_map"],
         charge_bearer_map=raw["charge_bearer_map"],
-        mapping_rules=raw["mapping_rules"],
+        mapping_rules=list(raw["mapping_rules"]) + custom,
         new_features=raw["new_features"],
         path=p,
     )

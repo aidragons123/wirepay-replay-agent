@@ -23,7 +23,13 @@ from wirepay_core import capture, report  # noqa: E402
 from wirepay_core.config import load_agent_config, load_spec  # noqa: E402
 from wirepay_core.engine import run_replay  # noqa: E402
 from wirepay_core.generator import generate_requests  # noqa: E402
+from wirepay_core.gate import Gate  # noqa: E402
+from wirepay_core.store import default_store  # noqa: E402
 from wirepay_core.runtime import adapters_from_config, standin_adapters  # noqa: E402
+
+
+def load_custom_rules():
+    return default_store().load_custom_rules()
 
 
 def cmd_sample(a) -> int:
@@ -52,7 +58,9 @@ def cmd_replay(a) -> int:
     if problems:
         print("capture problems:\n  " + "\n  ".join(problems))
         return 2
-    run = run_replay(records, new, load_spec(a.spec), meta={"capture": cap_path.name})
+    run = run_replay(records, new, load_spec(a.spec, load_custom_rules()), meta={"capture": cap_path.name})
+    if not a.no_save:
+        print("saved to history as", default_store().save_run(run, "replay", a.label, source=cap_path.name, kind="replay", gate=Gate(**default_store().load_settings()["gate"])))
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -91,6 +99,8 @@ def main() -> int:
     r.add_argument("--capture", default=None)
     r.add_argument("--parity-fix", action="store_true", help="stand-in only: run the new code with the planted gaps fixed")
     r.add_argument("--out", default=str(ROOT / "out"))
+    r.add_argument("--label", default="", help="name for this run in the history")
+    r.add_argument("--no-save", action="store_true", help="do not save this run to the history")
     r.add_argument("--no-fail", action="store_true", help="exit 0 even when there are mismatches")
     r.set_defaults(fn=cmd_replay)
     a = ap.parse_args()

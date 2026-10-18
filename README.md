@@ -1,13 +1,13 @@
-# Wire payments · Replay agent
+# Parity Replay
 
-**Agent 1 of 2** for migrating wire-payment creation from the old Java 8 service (flat payment model, no
+**Parity Replay** tests the migration of wire-payment creation from the old Java 8 service (flat payment model, no
 workflow) to the new Java 18 service (workflow model, ISO 20022 **pacs.008**, plus new features).
 
 > Your old system already runs every day. This agent takes what it **already processed** — each request and the
 > response it actually gave — feeds the same requests to the new code, and compares the answers. Bulk testing of
 > 1,000 (or 100,000) real payments, with no change to the old system.
 
-Its sibling, [`wirepay-dualrun-agent`](https://github.com/aidragons123/wirepay-dualrun-agent), sends the same
+Its sibling product **Twin Run** ([`wirepay-dualrun-agent`](https://github.com/aidragons123/wirepay-dualrun-agent)), sends the same
 request to both implementations live.
 
 ## Run it
@@ -21,7 +21,22 @@ make replay-fixed                    # stand-in with its planted gaps fixed: 0 m
 make test
 ```
 
-`make replay` exits with code 1 when any payment mismatches, so it can gate a pipeline.
+`make replay` also saves the run to the history (`--label NAME`, `--no-save`) and exits with code 1 when any payment mismatches, so it can gate a pipeline.
+
+## What is in the app
+
+| Page | What you do there |
+|---|---|
+| **New replay** | Configure and start a run. Every run is saved automatically. |
+| **Overview** | A GO / NO-GO release banner, KPI tiles with change against your baseline, charts of where it differs, mismatch patterns with a suggested fix, trace and downloads. |
+| **Payments** | Filter by verdict, rule, currency or id; select a payment to see old and new side by side, the rule-by-rule result, the new workflow path and the pacs.008 XML. |
+| **Run history** | Every past run with a parity-over-time chart. Open, pin, rename, annotate, delete, set a baseline, or select two to compare. |
+| **Compare runs** | Two runs on the same inputs: payments fixed, regressed, still failing; patterns resolved or new; rules that changed. |
+| **Rules** | Latest rule results, the full rule library, and a form to add your own rule without code. |
+| **Settings** | Release-gate limits, services under test, history bundle export and restore. |
+
+Saved runs live in `.wirepay/` next to the app. **On Streamlit Community Cloud this folder is wiped whenever the app restarts or
+sleeps**, so use *Settings → Download history bundle* before that, and *Restore* afterwards. Run locally and history is kept for good.
 
 ## What it does
 
@@ -126,8 +141,8 @@ compiled for the highest level available and the app says so.
 
 ```
 streamlit_app.py     UI              run_replay.py   CLI            agent.yaml   configuration
-wirepay_core/        engine: adapters, canonical form, compare, explain, generator, report, ui
+wirepay_core/        engine, store (history), diffing, gate, charts, shell + ui (the app)
   spec/mapping_rules.yaml           the rules
 java/old, java/new   stand-in services (Java 8 / Java 18)
-data/                recorded sample day (1,000 payments)           tests/       23 tests
+data/                recorded sample day (1,000 payments)           tests/       28 tests
 ```

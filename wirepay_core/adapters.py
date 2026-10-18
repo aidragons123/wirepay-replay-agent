@@ -23,7 +23,7 @@ class AdapterError(RuntimeError):
 class Adapter:
     name = "adapter"
 
-    def run(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def run(self, requests: list[dict[str, Any]], on_progress=None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def describe(self) -> str:
@@ -43,7 +43,7 @@ class SubprocessAdapter(Adapter):
     def name(self) -> str:  # type: ignore[override]
         return self.label
 
-    def run(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def run(self, requests: list[dict[str, Any]], on_progress=None) -> list[dict[str, Any]]:
         if not requests:
             return []
         payload = "\n".join(json.dumps(r, ensure_ascii=False) for r in requests) + "\n"
@@ -60,6 +60,8 @@ class SubprocessAdapter(Adapter):
         lines = [ln for ln in p.stdout.decode("utf-8").splitlines() if ln.strip()]
         if len(lines) != len(requests):
             raise AdapterError(f"{self.label} returned {len(lines)} responses for {len(requests)} requests")
+        if on_progress:
+            on_progress(len(requests), len(requests))
         return [json.loads(ln) for ln in lines]
 
     def describe(self) -> str:
@@ -89,9 +91,14 @@ class HttpAdapter(Adapter):
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
             raise AdapterError(f"{self.label} call failed for {req.get('requestId')}: {e}") from e
 
-    def run(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def run(self, requests: list[dict[str, Any]], on_progress=None) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=self.workers) as ex:
-            return list(ex.map(self._one, requests))
+            for i, resp in enumerate(ex.map(self._one, requests), start=1):
+                out.append(resp)
+                if on_progress:
+                    on_progress(i, len(requests))
+        return out
 
     def describe(self) -> str:
         return f"{self.label}: POST {self.url}"

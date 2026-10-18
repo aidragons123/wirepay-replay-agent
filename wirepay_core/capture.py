@@ -69,3 +69,25 @@ def validate(records: Iterable[dict[str, Any]]) -> list[str]:
 
 def dump_jsonl(records: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records)
+
+
+def parse_requests_bytes(data: bytes, filename: str) -> list[dict[str, Any]]:
+    """A file of plain requests (no recorded responses): JSONL with one request object per line, or a CSV whose header
+    row is the request field names."""
+    text = data.decode("utf-8-sig")
+    if filename.lower().endswith(".csv"):
+        rows = [dict(r) for r in csv.DictReader(io.StringIO(text))]
+    else:
+        rows = []
+        for n, line in enumerate(text.splitlines(), start=1):
+            if line.strip():
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError as e:
+                    raise CaptureError(f"line {n}: not valid JSON ({e.msg})") from e
+                rows.append(obj.get("request", obj) if isinstance(obj, dict) else obj)
+    if not rows or not all(isinstance(r, dict) for r in rows):
+        raise CaptureError("no request objects found")
+    for i, r in enumerate(rows, start=1):
+        r.setdefault("requestId", f"UP{i:06d}")
+    return rows
