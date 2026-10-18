@@ -1,0 +1,25 @@
+# Replay agent configuration.
+#
+# The bundled "standin" services let the agent run end to end with nothing deployed.
+# To test your REAL new code, replace the `new:` block (see the examples below).
+# The OLD system is never called by this agent - its answers come from the recorded capture.
+
+capture: data/sample_capture_1000.jsonl     # JSONL or CSV of recorded old-system traffic
+
+new:
+  type: standin          # standin | subprocess | http
+  parity_fix: false      # standin only: true = the planted parity gaps are fixed
+
+# --- point at your real new implementation -------------------------------------------
+# new:
+#   type: http
+#   url: https://wire-new.internal.example/api/payments
+#   headers: {Authorization: "Bearer <token>"}
+#   workers: 8
+#
+# new:
+#   type: subprocess     # any JVM main class speaking one-JSON-request-per-line on stdin/stdout
+#   java_bin: /usr/lib/jvm/java-18-openjdk-amd64/bin/java
+#   classpath: /opt/wire-new/classes
+#   main_class: com.example.wire.Main
+#   jvm_args: ["-Xmx512m"]

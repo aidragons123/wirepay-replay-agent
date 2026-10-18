@@ -1,0 +1,56 @@
+# Field-mapping rules between the OLD payment model (flat, Java 8) and the
+# NEW one (workflow + ISO 20022 pacs.008, Java 18).
+#
+# Each rule is one thing the migration must preserve. The comparator checks
+# every rule on every payment and reports the rule-by-rule verdict.
+#
+# To add a rule, append an entry below. `field` is any canonical field the
+# comparator extracts (payment_id, amount, currency, fee, settlement_date,
+# debtor_name, creditor_name, debtor_account, creditor_account,
+# creditor_bic, charge_bearer, remittance). No code change needed.
+version: 1
+
+decision_map:        # old status -> new status
+  ACCEPTED: ACCP
+  REJECTED: RJCT
+
+reason_code_map:     # old error code -> ISO 20022 external status reason
+  E001: FF01
+  E002: AM01
+  E003: AM03
+  E004: RC01
+  E005: DT01
+  E006: AC01
+  E007: AM02
+
+charge_bearer_map:   # old charge bearer -> pacs.008 ChrgBr
+  OUR: DEBT
+  BEN: CRED
+  SHA: SHAR
+
+mapping_rules:
+  - {id: M-001, title: Payment decision,        field: decision,         compare: decision,  applies: always,        old_ref: status,          new_ref: "status (ACCP / RJCT)"}
+  - {id: M-002, title: Reject reason code,      field: reason,           compare: reason,    applies: both_rejected, old_ref: errorCode,       new_ref: reasonCode}
+  - {id: M-003, title: Payment id,              field: payment_id,       compare: exact,     applies: both_accepted, old_ref: paymentId,       new_ref: PmtId/InstrId}
+  - {id: M-004, title: Amount,                  field: amount,           compare: decimal,   applies: both_accepted, old_ref: amount,          new_ref: IntrBkSttlmAmt}
+  - {id: M-005, title: Currency,                field: currency,         compare: exact,     applies: both_accepted, old_ref: currency,        new_ref: IntrBkSttlmAmt/@Ccy}
+  - {id: M-006, title: Settlement date,         field: settlement_date,  compare: date,      applies: both_accepted, old_ref: settlementDate,  new_ref: IntrBkSttlmDt}
+  - {id: M-007, title: Wire fee,                field: fee,              compare: decimal,   applies: both_accepted, old_ref: fee,             new_ref: ChrgsInf/Amt}
+  - {id: M-008, title: Charge bearer,           field: charge_bearer,    compare: bearer,    applies: both_accepted, old_ref: chargeBearer,    new_ref: ChrgBr}
+  - {id: M-009, title: Debtor name,             field: debtor_name,      compare: name,      applies: both_accepted, old_ref: debtorName,      new_ref: Dbtr/Nm}
+  - {id: M-010, title: Creditor name,           field: creditor_name,    compare: name,      applies: both_accepted, old_ref: creditorName,    new_ref: Cdtr/Nm}
+  - {id: M-011, title: Debtor account,          field: debtor_account,   compare: exact,     applies: both_accepted, old_ref: debtorAccount,   new_ref: DbtrAcct/Id}
+  - {id: M-012, title: Creditor account,        field: creditor_account, compare: exact,     applies: both_accepted, old_ref: creditorAccount, new_ref: CdtrAcct/Id}
+  - {id: M-013, title: Creditor bank BIC,       field: creditor_bic,     compare: exact,     applies: both_accepted, old_ref: creditorBic,     new_ref: CdtrAgt/FinInstnId/BICFI}
+  - {id: M-014, title: Remittance information,  field: remittance,       compare: exact,     applies: both_accepted, old_ref: remittanceInfo,  new_ref: RmtInf/Ustrd}
+
+# Behaviour that exists ONLY in the new code. Differences caused by these are
+# reported as EXPECTED (and independently re-derived, never taken on trust);
+# a feature that fails to behave is reported as a defect.
+new_features:
+  - {id: N-001, title: IBAN checksum validation (mod-97),               kind: explains,  note: "Old code only checked IBAN shape. New code rejects bad checksums (AC01)."}
+  - {id: N-002, title: TARGET2 holiday-aware settlement date (EUR),     kind: explains,  note: "Old code only skipped weekends. New code also skips TARGET2 closing days for EUR."}
+  - {id: N-003, title: Full-length party names (up to 140 chars),       kind: explains,  note: "Old model truncated names to 35 characters. pacs.008 allows 140."}
+  - {id: N-004, title: UETR assigned (UUIDv4 format),                   kind: verifies,  note: "Every accepted payment carries a well-formed unique end-to-end transaction reference."}
+  - {id: N-005, title: Workflow audit trail is legal and complete,      kind: verifies,  note: "History starts at RECEIVED, only uses allowed transitions, ends in the state matching the decision."}
+  - {id: N-006, title: pacs.008 message is structurally complete,       kind: verifies,  note: "Required elements present and parseable. (Full XSD validation can be plugged in - see README.)"}
