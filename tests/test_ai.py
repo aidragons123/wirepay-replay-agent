@@ -114,3 +114,27 @@ def test_api_errors_show_anthropic_message_and_fix(monkeypatch):
     with pytest.raises(ai.AIError) as e:
         ai.complete("s", [{"role": "user", "content": "q"}], api_key="k")
     assert "credit balance is too low" in str(e.value) and "Plans & Billing" in str(e.value) and "400" in str(e.value)
+
+
+def test_workspace_id_is_sent_as_header_and_error_hint(monkeypatch):
+    import types
+
+    import anthropic
+    ai.set_backend(None)
+    seen = {}
+
+    class Client:
+        def __init__(self, **kw):
+            seen.update(kw)
+            self.messages = self
+
+        def create(self, **kw):
+            return types.SimpleNamespace(content=[types.SimpleNamespace(text="OK")])
+
+    monkeypatch.setattr(anthropic, "Anthropic", Client)
+    assert ai.complete("s", [{"role": "user", "content": "q"}], api_key="k", workspace_id=" wrkspc_123 ") == "OK"
+    assert seen["default_headers"] == {"anthropic-workspace-id": "wrkspc_123"}
+    ai.complete("s", [{"role": "user", "content": "q"}], api_key="k")
+    assert seen["default_headers"] is None
+    msg = ai._explain_status(types.SimpleNamespace(status_code=400, body={"error": {"message": "This API key is not scoped to a workspace"}}))
+    assert "workspace ID" in msg

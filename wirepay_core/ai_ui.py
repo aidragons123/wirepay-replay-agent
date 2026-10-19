@@ -20,9 +20,18 @@ def api_key() -> str:
     return st.session_state.get("ai_key") or _secret() or os.environ.get("ANTHROPIC_API_KEY", "")
 
 
+def _workspace(saved: str = "") -> str:
+    try:
+        sec = str(st.secrets.get("ANTHROPIC_WORKSPACE_ID", ""))
+    except Exception:
+        sec = ""
+    return (saved or sec or os.environ.get("ANTHROPIC_WORKSPACE_ID", "")).strip()
+
+
 def options(ctx) -> dict[str, Any]:
     s = ctx.settings.get("ai", {})
-    return {"model": s.get("model") or ai.DEFAULT_MODEL, "do_mask": bool(s.get("mask", True))}
+    return {"model": s.get("model") or ai.DEFAULT_MODEL, "do_mask": bool(s.get("mask", True)),
+            "workspace_id": _workspace(s.get("workspace_id", ""))}
 
 
 def ready() -> bool:
@@ -131,7 +140,7 @@ def rule_from_text(ctx) -> None:
     if st.button("Draft the rule with AI", key="ai_rule_go", disabled=not text.strip()):
         try:
             with st.spinner("Drafting…"):
-                st.session_state["ai_rule_draft"] = ai.draft_rule(text, api_key=api_key(), model=o["model"])
+                st.session_state["ai_rule_draft"] = ai.draft_rule(text, api_key=api_key(), model=o["model"], workspace_id=o["workspace_id"])
         except ai.AIError as exc:
             st.session_state.pop("ai_rule_draft", None)
             st.error(str(exc))
@@ -163,11 +172,14 @@ def settings_panel(ctx) -> None:
         key = st.text_input("Anthropic API key", st.session_state.get("ai_key", ""), type="password",
                             help="Kept for this browser session only. On Streamlit Cloud you can instead add ANTHROPIC_API_KEY under the app's Secrets.")
         model = st.text_input("Model", ai_s.get("model", ""), placeholder=ai.DEFAULT_MODEL, help="Leave empty for the default.")
+        wsid = st.text_input("Workspace ID (only if your key is not tied to a workspace)", ai_s.get("workspace_id", ""),
+                             placeholder="wrkspc_…", help="Needed when the Console key was created for the whole organization. "
+                             "Find it in the Claude Console under Workspaces. Not a secret like the key, but keep it private.")
         mk = st.toggle("Hide account numbers (IBANs) before sending", value=bool(ai_s.get("mask", True)),
                        help="Replaces each IBAN with its first four and last two characters. Names and amounts are still sent.")
         if st.form_submit_button("Save", type="primary"):
             st.session_state["ai_key"] = key.strip()
-            s["ai"] = {"model": model.strip(), "mask": mk}
+            s["ai"] = {"model": model.strip(), "mask": mk, "workspace_id": wsid.strip()}
             ctx.store.save_settings(s)
             st.success("Saved.")
     src = "session key" if st.session_state.get("ai_key") else "app secret" if _secret() else "environment" if os.environ.get("ANTHROPIC_API_KEY") else ""
@@ -175,8 +187,9 @@ def settings_panel(ctx) -> None:
     if ready() and st.button("Test the connection"):
         try:
             with st.spinner("Calling the model…"):
+                o = options(ctx)
                 ai.complete("Reply with the single word OK.", [{"role": "user", "content": "ping"}], api_key=api_key(),
-                            model=options(ctx)["model"], max_tokens=10)
+                            model=o["model"], max_tokens=10, workspace_id=o["workspace_id"])
             st.success("Connected.")
         except ai.AIError as exc:
             st.error(str(exc))

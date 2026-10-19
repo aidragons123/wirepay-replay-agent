@@ -53,7 +53,7 @@ GO / NO-GO gate; the AI cannot change them.** It is off until you add an Anthrop
 | Rules, Add your own rule | Describe a rule in plain English; Claude drafts it and the engine validates it before you add it. |
 
 Privacy: IBANs are masked before sending by default (first four and last two characters kept). Names and amounts are still sent, so use
-test data or data you are allowed to share. The default model is `claude-sonnet-5-5`; change it in Settings or with `WIREPAY_AI_MODEL`.
+test data or data you are allowed to share. If your key is organisation-wide and not tied to a workspace, also enter the workspace ID (Settings, or the `ANTHROPIC_WORKSPACE_ID` secret). The default model is `claude-sonnet-5-5`; change it in Settings or with `WIREPAY_AI_MODEL`.
 
 ## What it does
 

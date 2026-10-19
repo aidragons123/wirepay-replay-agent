@@ -45,7 +45,8 @@ def set_backend(fn: Callable[..., str] | None) -> None:
     _backend = fn
 
 
-def complete(system: str, messages: list[dict[str, str]], *, api_key: str, model: str = "", max_tokens: int = 900) -> str:
+def complete(system: str, messages: list[dict[str, str]], *, api_key: str, model: str = "", max_tokens: int = 900,
+             workspace_id: str = "") -> str:
     model = model or DEFAULT_MODEL
     if _backend is not None:
         return _backend(system=system, messages=messages, model=model, max_tokens=max_tokens)
@@ -56,7 +57,8 @@ def complete(system: str, messages: list[dict[str, str]], *, api_key: str, model
     except ImportError as exc:                                              # pragma: no cover
         raise AIError("The 'anthropic' package is not installed. Run: pip install anthropic") from exc
     try:
-        client = anthropic.Anthropic(api_key=api_key, timeout=90.0)
+        headers = {"anthropic-workspace-id": workspace_id.strip()} if workspace_id and workspace_id.strip() else None
+        client = anthropic.Anthropic(api_key=api_key, timeout=90.0, default_headers=headers)
         msg = client.messages.create(model=model, max_tokens=max_tokens, system=system, messages=messages)
     except anthropic.AuthenticationError as exc:
         raise AIError("Anthropic rejected the API key. Check it under Settings, AI assistant.") from exc
@@ -84,7 +86,9 @@ def _explain_status(exc: Any) -> str:
     detail = (detail or getattr(exc, "message", "") or str(exc)).strip()[:300]
     low = detail.lower()
     hint = ""
-    if "credit balance" in low or "billing" in low:
+    if "workspace" in low:
+        hint = " Create the key inside a workspace, or enter the workspace ID under Settings, AI assistant."
+    elif "credit balance" in low or "billing" in low:
         hint = " Add credit under Plans & Billing in the Claude Console, then try again."
     elif "model" in low:
         hint = " Clear the Model box in Settings, AI assistant, or enter a model your key can use."
