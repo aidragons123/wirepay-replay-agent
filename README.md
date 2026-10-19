@@ -38,6 +38,23 @@ make test
 Saved runs live in `.wirepay/` next to the app. **On Streamlit Community Cloud this folder is wiped whenever the app restarts or
 sleeps**, so use *Settings → Download history bundle* before that, and *Restore* afterwards. Run locally and history is kept for good.
 
+## The AI analyst
+
+Claude is used for what rules cannot do: reading results and explaining them. **The rule engine still decides every verdict and the
+GO / NO-GO gate; the AI cannot change them.** It is off until you add an Anthropic API key (Settings, AI assistant, or the
+`ANTHROPIC_API_KEY` secret on Streamlit Cloud). Without a key the rest of the app works unchanged.
+
+| Where | What Claude does |
+|---|---|
+| Overview, Mismatch patterns | **Suggest a fix with AI**: reads the mismatch pattern, its examples and the new-service code (comments stripped, so it finds the cause from the logic) and proposes the root cause and a before/after change. You can paste your own code. |
+| Payments | **Explain with AI**: why this payment differs and whether that is expected. |
+| AI analyst, Release brief | A short brief for a delivery manager: decision, expected changes, problems, next step. |
+| AI analyst, Ask about this run | Chat grounded in the run's facts ("Which rule fails most?", "What should I fix first?"). |
+| Rules, Add your own rule | Describe a rule in plain English; Claude drafts it and the engine validates it before you add it. |
+
+Privacy: IBANs are masked before sending by default (first four and last two characters kept). Names and amounts are still sent, so use
+test data or data you are allowed to share. The default model is `claude-sonnet-5-5`; change it in Settings or with `WIREPAY_AI_MODEL`.
+
 ## What it does
 
 ```
@@ -130,7 +147,7 @@ Things this does **not** do:
   Behavioural differences between JVM versions only appear when you point the agent at your real deployed services.
 - pacs.008 checking is structural (mandatory elements, parseable). Full XSD validation needs the official schema
   files; they can be plugged in at `canon_new()`.
-- Diagnosis is deterministic and rule-based. No LLM is called; an AI explainer could sit on top of the patterns later.
+- Verdicts and the gate are deterministic and rule-based. The AI analyst (optional) only explains and suggests; it never decides.
 
 ## Deploy on Streamlit Community Cloud
 
@@ -144,5 +161,5 @@ streamlit_app.py     UI              run_replay.py   CLI            agent.yaml  
 wirepay_core/        engine, store (history), diffing, gate, charts, shell + ui (the app)
   spec/mapping_rules.yaml           the rules
 java/old, java/new   stand-in services (Java 8 / Java 18)
-data/                recorded sample day (1,000 payments)           tests/       28 tests
+data/                recorded sample day (1,000 payments)           tests/       35 tests
 ```

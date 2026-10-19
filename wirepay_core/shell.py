@@ -12,7 +12,7 @@ from typing import Any, Callable
 import pandas as pd
 import streamlit as st
 
-from . import charts, ui
+from . import ai_ui, charts, ui
 from .adapters import Adapter, HttpAdapter
 from .brand import Agent
 from .config import load_spec
@@ -214,7 +214,7 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
                 dim = st.segmented_control("Split verdicts by", ["Currency", "Charge bearer", "Old decision"], default="Currency", key="ov_dim")
                 st.altair_chart(charts.breakdown_chart(run, dim or "Currency"), width="stretch")
         with t2:
-            ui.patterns_view(run.patterns, sm["counts"]["mismatch"])
+            ui.patterns_view(run.patterns, sm["counts"]["mismatch"], extra=lambda p: ai_ui.pattern_fix(ctx, sm, run, p))
             if run.patterns:
                 if st.button("Open the affected payments", key="ov_open"):
                     st.session_state["pay_filter"] = ["MISMATCH"]
@@ -275,7 +275,20 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
         if not sel:
             st.caption("Showing the first payment. Select a row to inspect another.")
         st.divider()
-        ui.inspector(r, "pay")
+        ui.inspector(r, "pay", extra=lambda: ai_ui.payment_explain(ctx, sm, r) if r.verdict != "MATCH" else None)
+
+    def p_ai() -> None:
+        picked = run_picker("ai_pick")
+        if not picked:
+            return no_runs()
+        sm, run = picked
+        ui.page_header("AI analyst", "Claude reads the rule engine's results and explains them. It never changes a verdict.")
+        t1, t2 = st.tabs(["Release brief", "Ask about this run"])
+        with t1:
+            ui.gate_banner(sm["gate"]["passed"], sm["gate"]["reasons"], sm["gate"], sm["counts"])
+            ai_ui.brief(ctx, sm, run)
+        with t2:
+            ai_ui.ask(ctx, sm, run)
 
     def p_history() -> None:
         runs = store.list_runs()
@@ -421,7 +434,9 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
             c3.markdown("**Charge bearers**")
             c3.json(spec.charge_bearer_map)
         with t3:
-            st.write("Add a field the migration must also preserve. It is checked on every payment in later runs, with no code change.")
+            ai_ui.rule_from_text(ctx)
+            st.divider()
+            st.write("Or add a field the migration must also preserve. It is checked on every payment in later runs, with no code change.")
             fields = ["payment_id", "amount", "currency", "fee", "settlement_date", "debtor_name", "creditor_name", "debtor_account",
                       "creditor_account", "creditor_bic", "charge_bearer", "remittance"]
             with st.form("add_rule", clear_on_submit=True):
@@ -455,7 +470,7 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
     def p_settings() -> None:
         ui.page_header("Settings", "Release gate, which services to test, and how history is kept.")
         s = ctx.settings
-        t1, t2, t3 = st.tabs(["Release gate", "Services under test", "History and data"])
+        t1, t2, t3, t4 = st.tabs(["Release gate", "Services under test", "History and data", "AI assistant"])
         with t1:
             st.write("A run is GO only when it stays within both limits. The limits are saved with every run, so old results keep the gate they were judged by.")
             with st.form("gate"):
@@ -494,6 +509,8 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
                     st.success("Saved.")
             if dual:
                 st.warning("Sending requests to a live production payment service creates real payments. Point the old side at a test or shadow environment.")
+        with t4:
+            ai_ui.settings_panel(ctx)
         with t3:
             runs = store.list_runs()
             a, b, c = st.columns(3)
@@ -518,7 +535,7 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
             st.divider()
             st.markdown("**What this is not**")
             st.markdown("- The bundled services are stand-ins, not your code. They compile for Java 8 and 18 but run on whatever JVM is installed.\n"
-                        "- pacs.008 is checked structurally, not against the full XSD.\n- Diagnosis is rule-based; no AI model is called.")
+                        "- pacs.008 is checked structurally, not against the full XSD.\n- Verdicts and the gate are rule-based. The optional AI analyst only explains and suggests; it never decides.")
 
     # ------------------------------------------------------------------ navigation
     P = st.Page
@@ -526,13 +543,14 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
         "run": P(p_workbench, title=agent.run_page_title, icon=":material/play_circle:", url_path="run", default=True),
         "overview": P(p_overview, title="Overview", icon=":material/space_dashboard:", url_path="overview"),
         "payments": P(p_payments, title="Payments", icon=":material/receipt_long:", url_path="payments"),
+        "ai": P(p_ai, title="AI analyst", icon=":material/auto_awesome:", url_path="ai"),
         "history": P(p_history, title="Run history", icon=":material/history:", url_path="history"),
         "compare": P(p_compare, title="Compare runs", icon=":material/compare_arrows:", url_path="compare"),
         "rules": P(p_rules, title="Rules", icon=":material/rule:", url_path="rules"),
         "settings": P(p_settings, title="Settings", icon=":material/tune:", url_path="settings"),
     }
     g = ctx.pages
-    nav = st.navigation({"Run": [g["run"]], "Analyse": [g["overview"], g["payments"]], "History": [g["history"], g["compare"]],
+    nav = st.navigation({"Run": [g["run"]], "Analyse": [g["overview"], g["payments"], g["ai"]], "History": [g["history"], g["compare"]],
                          "Configure": [g["rules"], g["settings"]]})
 
     with st.sidebar:
@@ -541,7 +559,7 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
         new_desc = NEW_KINDS[s["new"]["kind"]]
         old_line = f"<div><span class='dim'>Old</span> {OLD_KINDS[s['old']['kind']]}</div>" if agent.key == "dualrun" else \
             "<div><span class='dim'>Old</span> Recorded traffic</div>"
-        st.markdown(f"<div class='sb-card'><b>Environment</b>{old_line}<div><span class='dim'>New</span> {new_desc}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='sb-card'><b>Environment</b>{old_line}<div><span class='dim'>New</span> {new_desc}</div><div><span class='dim'>AI</span> {'on' if ai_ui.ready() else 'off, no API key'}</div></div>", unsafe_allow_html=True)
         if runs:
             r = runs[0]
             ok = r["gate"]["passed"]

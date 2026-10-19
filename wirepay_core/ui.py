@@ -194,7 +194,7 @@ def workflow_stepper(history: list[dict[str, Any]]) -> None:
     st.markdown(html_, unsafe_allow_html=True)
 
 
-def inspector(r: RecordResult, key: str) -> None:
+def inspector(r: RecordResult, key: str, extra=None) -> None:
     """Everything about ONE payment: verdict, why, side-by-side responses, workflow, pacs.008."""
     st.markdown(f"#### {esc(r.request_id)} &nbsp; {chip(r.verdict)}", unsafe_allow_html=True)
     for c in r.mismatches + r.expected:
@@ -202,6 +202,8 @@ def inspector(r: RecordResult, key: str) -> None:
                                                            + (f"\n\nSuggested fix: {c.fix}" if c.fix else ""))
     if r.verdict == "MATCH":
         st.success("Every applicable rule agrees between old and new.")
+    if extra:
+        extra()
     left, right = st.columns(2)
     with left:
         st.markdown("**Old response**")
@@ -224,7 +226,7 @@ def inspector(r: RecordResult, key: str) -> None:
             st.code(pretty_xml(xml), language="xml")
 
 
-def patterns_view(patterns: list[dict[str, Any]], mismatches: int) -> None:
+def patterns_view(patterns: list[dict[str, Any]], mismatches: int, extra=None) -> None:
     if not patterns:
         st.success("No mismatches. Every difference between old and new is a documented, independently verified one.")
         return
@@ -238,6 +240,8 @@ def patterns_view(patterns: list[dict[str, Any]], mismatches: int) -> None:
             if p["fix"]:
                 st.markdown(f"**Suggested fix:** {p['fix']}")
             st.caption("Examples: " + ", ".join(p["examples"][:6]))
+            if extra:
+                extra(p)
 
 
 def trace_table(run: RunResult) -> None:

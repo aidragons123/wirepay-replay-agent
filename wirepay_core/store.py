@@ -54,6 +54,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "old": {"kind": "standin", "url": "", "timeout": 30},
     "new": {"kind": "standin_gaps", "url": "", "timeout": 30},
     "baseline_id": "",
+    "ai": {"model": "", "mask": True},
 }
 
 

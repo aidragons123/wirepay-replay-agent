@@ -2,3 +2,4 @@ streamlit>=1.52
 pandas
 pyyaml
 pytest
+anthropic>=0.40
