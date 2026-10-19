@@ -67,11 +67,30 @@ def complete(system: str, messages: list[dict[str, str]], *, api_key: str, model
     except anthropic.APIConnectionError as exc:
         raise AIError("Could not reach the Anthropic API. Check the network connection.") from exc
     except anthropic.APIStatusError as exc:
-        raise AIError(f"The Anthropic API returned an error ({exc.status_code}).") from exc
+        raise AIError(_explain_status(exc)) from exc
     text = "".join(getattr(b, "text", "") for b in msg.content).strip()
     if not text:
         raise AIError("The model returned an empty answer. Try again.")
     return text
+
+
+def _explain_status(exc: Any) -> str:
+    """Say what Anthropic actually said, plus the usual fix, instead of a bare status code."""
+    detail = ""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error", body)
+        detail = str(err.get("message", "")) if isinstance(err, dict) else ""
+    detail = (detail or getattr(exc, "message", "") or str(exc)).strip()[:300]
+    low = detail.lower()
+    hint = ""
+    if "credit balance" in low or "billing" in low:
+        hint = " Add credit under Plans & Billing in the Claude Console, then try again."
+    elif "model" in low:
+        hint = " Clear the Model box in Settings, AI assistant, or enter a model your key can use."
+    elif "max_tokens" in low or "too long" in low or "context" in low:
+        hint = " The request was too large. Try a smaller run."
+    return f"Anthropic API error {getattr(exc, 'status_code', '')}: {detail}{hint}"
 
 
 # ---------------------------------------------------------------- privacy

@@ -89,3 +89,28 @@ def test_brief_and_ask_use_run_facts_and_keep_history(run, stub, tmp_path):
     ai.answer("What first?", [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}], sm, run, api_key="k")
     assert [m["role"] for m in stub[1]["messages"]] == ["user", "assistant", "user"]
     assert "RUN FACTS" in stub[1]["system"] and run.patterns[0]["pattern_id"] in stub[1]["system"]
+
+
+def test_api_errors_show_anthropic_message_and_fix(monkeypatch):
+    import types
+
+    import anthropic
+    ai.set_backend(None)
+
+    def boom(status, message):
+        resp = types.SimpleNamespace(status_code=status, headers={}, request=None)
+        err = anthropic.BadRequestError(message, response=resp, body={"type": "error", "error": {"message": message}})
+
+        class Client:
+            def __init__(self, **kw):
+                self.messages = self
+
+            def create(self, **kw):
+                raise err
+
+        monkeypatch.setattr(anthropic, "Anthropic", Client)
+
+    boom(400, "Your credit balance is too low to access the Anthropic API.")
+    with pytest.raises(ai.AIError) as e:
+        ai.complete("s", [{"role": "user", "content": "q"}], api_key="k")
+    assert "credit balance is too low" in str(e.value) and "Plans & Billing" in str(e.value) and "400" in str(e.value)
