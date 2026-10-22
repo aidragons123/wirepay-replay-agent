@@ -78,6 +78,12 @@ h1,h2,h3 {{ color:var(--ink); letter-spacing:-.01em; }}
 .tile .l {{ font-size:.84rem; color:var(--muted); margin-top:.1rem; }}
 .tile .d {{ font-size:.8rem; margin-top:.25rem; font-weight:500; }}
 .tile.bad .v {{ color:{RED}; }}
+.tile.good .v {{ color:{GREEN}; }}
+.tile .s {{ font-size:.76rem; color:var(--muted); margin-top:.15rem; }}
+.sbar {{ display:flex; height:16px; border-radius:8px; overflow:hidden; background:#E6E9ED; margin:.2rem 0 .35rem; }}
+.sbar span {{ display:block; height:100%; }}
+.slegend {{ display:flex; gap:1.1rem; flex-wrap:wrap; font-size:.84rem; color:var(--muted); margin-bottom:.8rem; }}
+.slegend i {{ display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:.35rem; vertical-align:-1px; }}
 .d.up {{ color:{GREEN}; }} .d.down {{ color:{RED}; }} .d.flat {{ color:var(--muted); }}
 
 .chip {{ display:inline-block; padding:.12rem .6rem; border-radius:999px; font-size:.78rem; font-weight:600; border:1px solid; white-space:nowrap; }}
@@ -151,6 +157,29 @@ def kpi_tiles(counts: dict[str, Any], base: dict[str, Any] | None = None) -> Non
         col.markdown(f'<div class="tile {cls}"><div class="v">{val}</div><div class="l">{label}</div>{d}</div>', unsafe_allow_html=True)
 
 
+def scorecard(m: dict[str, Any], base: dict[str, Any] | None = None) -> None:
+    """Success / failure / error rates as one stacked bar plus four tiles. Buckets add up to 100%."""
+    if not m["total"]:
+        return
+    parts = [("Exact match", m["match_pct"], GREEN), ("Explained difference", m["explained_pct"], "#4F6D8F"),
+             ("Failure", m["failure_pct"], RED), ("Error", m["error_pct"], "#E0922F")]
+    bar = "".join(f'<span style="width:{p}%;background:{c}" title="{n}: {p}%"></span>' for n, p, c in parts if p)
+    leg = "".join(f'<span><i style="background:{c}"></i>{n} {p}%</span>' for n, p, c in parts)
+    st.markdown(f'<div class="sbar">{bar}</div><div class="slegend">{leg}</div>', unsafe_allow_html=True)
+    b = base or {}
+    tiles = [("Success rate", f"{m['success_pct']}%", f"{m['success']:,} of {m['total']:,} payments", "good", "success_pct", True),
+             ("Failure rate", f"{m['failure_pct']}%", f"{m['failure']:,} unexplained mismatches", "bad" if m["failure"] else "", "failure_pct", False),
+             ("Error rate", f"{m['error_pct']}%", f"{m['error']:,} with no usable answer", "bad" if m["error"] else "", "error_pct", False),
+             ("Explained", f"{m['explained_pct']}%", f"{m['explained']:,} expected changes", "", "explained_pct", None)]
+    for col, (label, val, sub, cls, key, good_up) in zip(st.columns(4), tiles):
+        d = _delta(m[key], b.get(key), good_up) if base and key in b else ""
+        col.markdown(f'<div class="tile {cls}"><div class="v">{val}</div><div class="l">{label}</div>'
+                     f'<div class="s">{sub}</div>{d}</div>', unsafe_allow_html=True)
+    st.caption(f"Accepted — old service {m['old_accept_pct']}% · new service {m['new_accept_pct']}%   |   "
+               f"Rejected — old {m['old_reject_pct']}% · new {m['new_reject_pct']}%.  "
+               "Error = a service gave no accepted/rejected answer or its pacs.008 would not parse.")
+
+
 def pretty_xml(xml: str) -> str:
     try:
         root = ET.fromstring(xml)
@@ -164,7 +193,8 @@ def rules_df(rule_report: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame([{
         "Rule": r["id"] + (" (custom)" if r.get("custom") else ""), "What it checks": r["title"],
         "Old field": r["old_ref"], "New field": r["new_ref"], "Checked": r["checked"], "Match": r["match"],
-        "Explained": r["expected"], "Mismatch": r["mismatch"], "Result": RULE_STATUS[r["status"]]} for r in rule_report])
+        "Explained": r["expected"], "Mismatch": r["mismatch"],
+        "Failure %": round(100 * r["mismatch"] / r["checked"], 1) if r["checked"] else 0.0, "Result": RULE_STATUS[r["status"]]} for r in rule_report])
 
 
 def results_df(results: list[RecordResult]) -> pd.DataFrame:

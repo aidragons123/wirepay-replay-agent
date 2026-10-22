@@ -198,3 +198,18 @@ def test_a_rule_added_in_yaml_is_picked_up_without_code_changes(tmp_path):
     run = run_replay([{"request": REQ, "response": old_ok()}], Echo(), spec)
     row = next(r for r in run.rule_report if r["id"] == "M-099")
     assert row["checked"] == 1 and row["status"] == "VALIDATED"
+
+
+def test_metrics_buckets_add_up():
+    from types import SimpleNamespace as S
+    from wirepay_core import metrics
+    ok = {"status": "ACCEPTED"}
+    new_ok = {"status": "ACCP"}
+    rs = [S(request_id="1", verdict="MATCH", old_response=ok, new_response=new_ok),
+          S(request_id="2", verdict="EXPECTED_DIFFERENCE", old_response=ok, new_response=new_ok),
+          S(request_id="3", verdict="MISMATCH", old_response=ok, new_response={"status": "RJCT"}),
+          S(request_id="4", verdict="MISMATCH", old_response=ok, new_response={})]
+    m = metrics.compute(rs)
+    assert (m["match"], m["explained"], m["failure"], m["error"]) == (1, 1, 1, 1)
+    assert m["success_pct"] == 50.0 and m["error_pct"] == 25.0
+    assert round(m["match_pct"] + m["explained_pct"] + m["failure_pct"] + m["error_pct"], 1) == 100.0

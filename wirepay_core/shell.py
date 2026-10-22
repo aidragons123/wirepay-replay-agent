@@ -12,7 +12,7 @@ from typing import Any, Callable
 import pandas as pd
 import streamlit as st
 
-from . import ai_ui, charts, ui
+from . import ai_ui, charts, metrics, ui
 from .adapters import Adapter, HttpAdapter
 from .brand import Agent
 from .config import load_spec
@@ -199,6 +199,14 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
         bid = ctx.settings.get("baseline_id")
         if bid and bid != sm["id"] and any(r["id"] == bid for r in store.list_runs()):
             base = next(r for r in store.list_runs() if r["id"] == bid)["counts"]
+        mx = metrics.compute(run.results)
+        bm = None
+        if bid and bid != sm["id"]:
+            try:
+                bm = metrics.compute(store.load_run(bid)[1].results)
+            except Exception:
+                bm = None
+        ui.scorecard(mx, bm)
         ui.kpi_tiles(sm["counts"], base)
         st.write("")
         t1, t2, t3 = st.tabs(["Where it differs", f"Mismatch patterns ({len(run.patterns)})", "Run details"])
