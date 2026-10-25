@@ -88,3 +88,35 @@ def test_every_one_click_scenario_demonstrates_what_its_label_says():
         for proc in ("2026-10-19", "2027-06-02"):           # also well past the bundled holiday list
             run = run_dual([scenario_request(label, proc)], old, new, SPEC)
             assert run.results[0].verdict == want, (label, proc, run.results[0].verdict)
+
+
+def test_git_branches_compared(tmp_path):
+    """Old = 'legacy' branch, new = 'modern' branch of one local repo; the fixed branch removes the planted gaps."""
+    import subprocess, sys
+    from pathlib import Path
+    from wirepay_core import gitsource
+    from datetime import date
+    root = Path(__file__).resolve().parent.parent
+    repo = tmp_path / "repo"
+    subprocess.run([sys.executable, str(root / "demo" / "make_demo_repo.py"), str(repo)], check=True, capture_output=True)
+    refs = gitsource.list_refs(str(repo))
+    assert {"legacy", "modern", "modern-fixed"} <= set(refs)
+    work = tmp_path / "work"
+    old = gitsource.prepare(gitsource.GitSpec(str(repo), "legacy", main_class="com.bank.wire.legacy.Main", release=8), work, "old")
+    new = gitsource.prepare(gitsource.GitSpec(str(repo), "modern", main_class="com.bank.wire.modern.Main", release=18), work, "new")
+    fix = gitsource.prepare(gitsource.GitSpec(str(repo), "modern-fixed", main_class="com.bank.wire.modern.Main", release=18), work, "new")
+    assert old.sha != new.sha and "modern" in new.label("new") and new.short in new.label("new")
+    spec = SPEC
+    reqs, _ = generate_requests(200, 3, date.today())
+    bad = run_dual(reqs, old.adapter("old"), new.adapter("new"), spec)
+    good = run_dual(reqs, old.adapter("old"), fix.adapter("new"), spec)
+    assert bad.counts["mismatch"] > 0 and good.counts["mismatch"] == 0
+    assert new.short in bad.meta["new"]
+
+
+def test_git_rejects_unsafe_input():
+    import pytest
+    from wirepay_core import gitsource
+    for repo, ref in (("-oops", "main"), ("ext::sh -c id", "main"), ("/tmp/x", "--upload-pack=id"), ("/tmp/x", "a..b")):
+        with pytest.raises(gitsource.GitError):
+            gitsource.validate(gitsource.GitSpec(repo, ref, main_class="a.B"))

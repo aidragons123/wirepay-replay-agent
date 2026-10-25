@@ -49,10 +49,12 @@ def fingerprint(run: RunResult) -> str:
     return hashlib.sha1("|".join(ids).encode()).hexdigest()[:12]
 
 
+_GIT = {"repo": "", "ref": "main", "main_class": "", "release": 17, "src": "", "build_cmd": "", "classpath": ""}
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "gate": Gate().as_dict(),
-    "old": {"kind": "standin", "url": "", "timeout": 30},
-    "new": {"kind": "standin_gaps", "url": "", "timeout": 30},
+    "old": {"kind": "standin", "url": "", "timeout": 30, "git": dict(_GIT)},
+    "new": {"kind": "standin_gaps", "url": "", "timeout": 30, "git": dict(_GIT)},
     "baseline_id": "",
     "ai": {"model": "", "mask": True},
 }

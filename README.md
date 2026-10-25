@@ -85,6 +85,20 @@ are usually 2 bugs.
 | P-1 implementation defect | 29 same-day payments rejected by the new code (off-by-one in the past-date check) |
 | P-2 rounding mode | 17 fees on an exact half cent: old rounds HALF_UP, new rounds HALF_EVEN |
 
+## Compare two Git branches, tags or commits
+
+Settings -> Services under test -> **Git repository**. Here only the new side is built, so you can replay the same recorded traffic against any branch or commit. The agent clones into its own folder, checks out the ref,
+compiles it with `javac` (or runs your build command, e.g. `mvn -q package`, and uses the classpath you give) and runs
+it. Every run stores the commit it tested (`name@ref . sha`). It only reads; it never pushes. For private repositories
+paste an access token (kept for the browser session only).
+
+The entry class must speak the batch protocol of the stand-ins (one JSON request per line on stdin, one JSON answer
+per line on stdout). A service that cannot do that should be deployed and used through the HTTP option instead.
+
+Try it locally: `python3 demo/make_demo_repo.py /tmp/wire-demo` builds a repo with branches `legacy`, `modern` and
+`modern-fixed`; use that path as the repository. On Streamlit Community Cloud a local path does not exist, so push that
+repo to GitHub and use its https URL. See `demo/DEMO_GUIDE.md` for the demo script.
+
 ## The new features it checks
 
 | Id | New behaviour | How the agent treats it |

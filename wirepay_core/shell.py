@@ -19,12 +19,14 @@ from .config import load_spec
 from .diffing import compare_runs
 from .engine import RunResult
 from .gate import Gate, evaluate
+from . import gitsource
 from .runtime import standin_adapters
 from .store import Store
 
 NEW_KINDS = {"standin_gaps": "Bundled stand-in, with its two planted gaps", "standin_fixed": "Bundled stand-in, gaps fixed",
+             "git": "Git repository: branch, tag or commit", "http": "External HTTP endpoint"}
+OLD_KINDS = {"standin": "Bundled stand-in (Java 8 target)", "git": "Git repository: branch, tag or commit",
              "http": "External HTTP endpoint"}
-OLD_KINDS = {"standin": "Bundled stand-in (Java 8 target)", "http": "External HTTP endpoint"}
 
 
 def fmt_time(iso: str) -> str:
@@ -78,8 +80,29 @@ class Ctx:
 
     def adapters(self) -> tuple[Adapter, Adapter, list[str]]:
         s = self.settings
-        s_old, s_new, notes = self.standins(s["new"]["kind"] == "standin_fixed")
-        old, new = s_old, s_new
+        notes: list[str] = []
+        old = new = None  # type: ignore[assignment]
+        if s["old"]["kind"] == "standin" or s["new"]["kind"].startswith("standin"):
+            s_old, s_new, notes = self.standins(s["new"]["kind"] == "standin_fixed")
+            old, new = s_old, s_new
+        for side in ("old", "new"):
+            if s[side]["kind"] == "git":
+                g = s[side]["git"]
+                if not g["repo"].strip():
+                    raise ValueError(f"The {side} Git repository is empty. Add it in Settings.")
+                spec = gitsource.GitSpec(g["repo"].strip(), g["ref"].strip() or "main", g["src"].strip(), g["main_class"].strip(),
+                                         int(g["release"]), g["build_cmd"].strip(), g["classpath"].strip(),
+                                         st.session_state.get(f"gittok_{side}", ""))
+                try:
+                    b = gitsource.prepare(spec, self.root / "build", side)
+                except gitsource.GitError as exc:
+                    raise ValueError(f"{side.capitalize()} service, Git: {exc}") from exc
+                if b.note:
+                    notes.append(b.note)
+                if side == "old":
+                    old = b.adapter("old")
+                else:
+                    new = b.adapter("new")
         if s["old"]["kind"] == "http":
             if not s["old"]["url"]:
                 raise ValueError("The old endpoint URL is empty. Add it in Settings.")
@@ -139,12 +162,51 @@ class Ctx:
             st.session_state[f"auth_{side}"] = auth
             changed = changed or url.strip() != s[side]["url"]
             s[side]["url"] = url.strip()
+        elif pick == "git":
+            g = self.git_inputs(side, f"pk_{side}")
+            changed = changed or g != s[side]["git"]
+            s[side]["git"] = g
+            st.caption("The agent clones the repository into a private folder, checks out this ref, compiles it and runs it. "
+                       "Each run records the commit it tested.")
         elif pick == "standin_gaps":
             st.caption("This stand-in has two deliberate gaps (fee rounding and the same-day cut-off), so there is something real to find.")
         elif pick == "standin_fixed":
             st.caption("The same stand-in with both gaps fixed. A clean migration should look like this: no mismatches.")
         if changed:
             self.store.save_settings(s)
+
+    def git_inputs(self, side: str, key: str, lookup: bool = True) -> dict[str, Any]:
+        """Repository, branch/tag/commit and build details for one side. Returns the values; the caller saves them."""
+        g = dict(self.settings[side]["git"])
+        g["repo"] = st.text_input("Repository", g["repo"], key=f"{key}_repo",
+                                  placeholder="https://github.com/your-org/wire-service.git  or  /path/to/local/clone")
+        tok = st.text_input("Access token (private repositories only)", st.session_state.get(f"gittok_{side}", ""), type="password",
+                            key=f"{key}_tok", help="Kept for this browser session only. Never written to disk.")
+        st.session_state[f"gittok_{side}"] = tok
+        refs: list[str] = st.session_state.get(f"refs_{side}", [])
+        if lookup and st.button("Find branches and tags", key=f"{key}_find", disabled=not g["repo"].strip()):
+            try:
+                refs = gitsource.list_refs(g["repo"], tok)
+                st.session_state[f"refs_{side}"] = refs
+            except gitsource.GitError as exc:
+                st.error(str(exc))
+        if refs:
+            idx = refs.index(g["ref"]) if g["ref"] in refs else 0
+            g["ref"] = st.selectbox("Branch or tag", refs, index=idx, key=f"{key}_refsel")
+        else:
+            g["ref"] = st.text_input("Branch, tag or commit", g["ref"], key=f"{key}_ref", help="A branch name, a tag, or a full or short commit hash.")
+        a, b = st.columns([3, 1])
+        g["main_class"] = a.text_input("Main class", g["main_class"], key=f"{key}_main", placeholder="com.bank.wire.Main",
+                                       help="Entry point that reads one JSON payment per line on stdin and prints one JSON answer per line. "
+                                            "The bundled stand-ins show the protocol.")
+        g["release"] = b.number_input("Java release", 8, 21, int(g["release"]), key=f"{key}_rel")
+        with st.expander("Build options"):
+            g["src"] = st.text_input("Source folder", g["src"], key=f"{key}_src", placeholder="auto-detect (src/main/java, then src)")
+            g["build_cmd"] = st.text_input("Build command (optional)", g["build_cmd"], key=f"{key}_bc", placeholder="mvn -q -DskipTests package",
+                                           help="Runs in the checked-out commit before anything else. Leave empty to compile the sources with javac.")
+            g["classpath"] = st.text_input("Classpath after build (optional)", g["classpath"], key=f"{key}_cp", placeholder="target/classes  or  target/app.jar",
+                                           help="Use this when your build command produces the classes. Leave empty to use javac output.")
+        return g
 
     def go(self, page: str) -> None:
         st.switch_page(self.pages[page])
@@ -491,30 +553,18 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
                     st.success("Saved. It applies to runs you start from now on.")
         with t2:
             dual = agent.key == "dualrun"
-            with st.form("env"):
-                if dual:
-                    st.markdown("**Old service**")
-                    ok = st.radio("Old", list(OLD_KINDS), format_func=OLD_KINDS.get, index=list(OLD_KINDS).index(s["old"]["kind"]), label_visibility="collapsed")
-                    ou = st.text_input("Old endpoint URL", s["old"]["url"], placeholder="https://wire-old.example/api/payments")
-                    oa = st.text_input("Old Authorization header", st.session_state.get("auth_old", ""), type="password",
-                                       help="Kept for this browser session only. Never written to disk.")
-                else:
-                    ok, ou, oa = "standin", "", ""
-                    st.caption("The old service is never called by this agent. Its answers come from the recorded traffic you replay.")
-                st.markdown("**New service**")
-                nk = st.radio("New", list(NEW_KINDS), format_func=NEW_KINDS.get, index=list(NEW_KINDS).index(s["new"]["kind"]), label_visibility="collapsed")
-                nu = st.text_input("New endpoint URL", s["new"]["url"], placeholder="https://wire-new.example/api/payments")
-                na = st.text_input("New Authorization header", st.session_state.get("auth_new", ""), type="password",
-                                   help="Kept for this browser session only. Never written to disk.")
-                to = st.number_input("Request timeout (seconds)", 1, 300, int(s["new"]["timeout"]))
-                if st.form_submit_button("Save services", type="primary"):
-                    if dual:
-                        s["old"] = {"kind": ok, "url": ou.strip(), "timeout": int(to)}
-                        st.session_state["auth_old"] = oa
-                    s["new"] = {"kind": nk, "url": nu.strip(), "timeout": int(to)}
-                    st.session_state["auth_new"] = na
-                    store.save_settings(s)
-                    st.success("Saved.")
+            if dual:
+                st.markdown("**Old service**")
+                ctx.picker("old")
+            else:
+                st.caption("The old service is never called by this agent. Its answers come from the recorded traffic you replay.")
+            st.markdown("**New service**")
+            ctx.picker("new")
+            to = st.number_input("HTTP request timeout (seconds)", 1, 300, int(s["new"]["timeout"]), key="svc_timeout")
+            if to != int(s["new"]["timeout"]) or (dual and to != int(s["old"]["timeout"])):
+                s["new"]["timeout"] = int(to)
+                s["old"]["timeout"] = int(to)
+                store.save_settings(s)
             if dual:
                 st.warning("Sending requests to a live production payment service creates real payments. Point the old side at a test or shadow environment.")
         with t4:
@@ -564,8 +614,14 @@ def run_app(agent: Agent, root: Path, workbench: Callable[[Ctx], None], quick_st
     with st.sidebar:
         s = ctx.settings
         runs = store.list_runs()
-        new_desc = NEW_KINDS[s["new"]["kind"]]
-        old_line = f"<div><span class='dim'>Old</span> {OLD_KINDS[s['old']['kind']]}</div>" if agent.key == "dualrun" else \
+        def kind_text(side: str) -> str:
+            k = s[side]["kind"]
+            if k == "git":
+                g = s[side]["git"]
+                return ui.esc(f"Git {g['repo'].rstrip('/').rsplit('/', 1)[-1].removesuffix('.git') or '(no repo)'}@{g['ref']}")
+            return (NEW_KINDS if side == "new" else OLD_KINDS)[k]
+        new_desc = kind_text("new")
+        old_line = f"<div><span class='dim'>Old</span> {kind_text('old')}</div>" if agent.key == "dualrun" else \
             "<div><span class='dim'>Old</span> Recorded traffic</div>"
         st.markdown(f"<div class='sb-card'><b>Environment</b>{old_line}<div><span class='dim'>New</span> {new_desc}</div><div><span class='dim'>AI</span> {'on' if ai_ui.ready() else 'off, no API key'}</div></div>", unsafe_allow_html=True)
         if runs:
