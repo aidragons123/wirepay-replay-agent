@@ -19,14 +19,14 @@ class Agent:
 
 
 PARITY_REPLAY = Agent(
-    key="replay", name="Parity Replay",
+    key="replay", name="Replay Agent",
     tagline="Replay recorded production payments through the new code and prove the answers still agree.",
     accent="#0F4C5C", accent_soft="#E1EEF1", sidebar="#0A2F39", sidebar_raised="#12434F", glyph="↻",
     run_page_title="New replay",
     run_page_hint="Pick yesterday's recorded traffic, choose the new code to test, and run it.")
 
 TWIN_RUN = Agent(
-    key="dualrun", name="Twin Run",
+    key="dualrun", name="Live Agent",
     tagline="Send the same payment to the old and the new service at once and compare every decision.",
     accent="#2A3FA8", accent_soft="#E7EAF8", sidebar="#141E58", sidebar_raised="#1F2D7A", glyph="⇄",
     run_page_title="New run",

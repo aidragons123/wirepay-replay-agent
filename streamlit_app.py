@@ -1,4 +1,4 @@
-"""Parity Replay - recorded traffic from the running OLD system is fed to the NEW code and the answers are compared.
+"""Replay Agent - recorded traffic from the running OLD system is fed to the NEW code and the answers are compared.
 
 Run with:  streamlit run streamlit_app.py     (or `make ui`)
 """
@@ -88,7 +88,7 @@ def workbench(ctx: Ctx) -> None:
         gate = ctx.gate()
         with st.container(border=True):
             st.markdown("#### What will happen")
-            st.markdown("1. Each recorded request goes to the new code.\n2. Its answer is compared with what the old system really said, on 14 mapping rules and 6 new-feature checks.\n"
+            st.markdown("1. Each recorded request goes to the new code.\n2. Its answer is compared with what the old system really said, on 14 mapping rules and 8 new-feature checks.\n"
                         "3. Differences are grouped into patterns.\n4. The run is saved to history and judged against the release gate.")
             st.caption(f"Release gate: at most {gate.max_mismatches} mismatches, at least {gate.min_parity_pct}% parity. Change it in Settings.")
         go = st.button("Replay through the new code", type="primary", width="stretch", disabled=not ready)

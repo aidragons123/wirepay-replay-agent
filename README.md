@@ -1,13 +1,13 @@
-# Parity Replay
+# Replay Agent
 
-**Parity Replay** tests the migration of wire-payment creation from the old Java 8 service (flat payment model, no
+**Replay Agent** tests the migration of wire-payment creation from the old Java 8 service (flat payment model, no
 workflow) to the new Java 18 service (workflow model, ISO 20022 **pacs.008**, plus new features).
 
 > Your old system already runs every day. This agent takes what it **already processed** — each request and the
 > response it actually gave — feeds the same requests to the new code, and compares the answers. Bulk testing of
 > 1,000 (or 100,000) real payments, with no change to the old system.
 
-Its sibling product **Twin Run** ([`wirepay-dualrun-agent`](https://github.com/aidragons123/wirepay-dualrun-agent)), sends the same
+Its sibling product **Live Agent** ([`wirepay-dualrun-agent`](https://github.com/aidragons123/wirepay-dualrun-agent)), sends the same
 request to both implementations live.
 
 ## Run it
