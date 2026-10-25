@@ -54,14 +54,13 @@ def parse_bytes(data: bytes, filename: str) -> list[dict[str, Any]]:
 
 def validate(records: Iterable[dict[str, Any]]) -> list[str]:
     """Human-readable problems with a capture (empty list = fine)."""
-    issues, seen = [], set()
+    issues = []
     for i, r in enumerate(records, start=1):
+        # The same requestId may appear more than once on purpose: real traffic contains re-sent payments
+        # (duplicates) and payments resumed after a fraud hold. Both are replayed in order.
         rid = str(r["request"].get("requestId", "")).strip()
         if not rid:
             issues.append(f"record {i}: request has no requestId")
-        elif rid in seen:
-            issues.append(f"record {i}: duplicate requestId {rid}")
-        seen.add(rid)
         if not str(r["response"].get("status", "")).strip():
             issues.append(f"record {i} ({rid or '?'}): old response has no status")
     return issues[:50]
