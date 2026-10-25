@@ -25,6 +25,7 @@ public class WirePaymentService {
     static final Set<String> CURRENCIES =
             new HashSet<String>(Arrays.asList("USD", "EUR", "GBP", "JPY", "INR", "CHF"));
     static final BigDecimal LIMIT = new BigDecimal("1000000.00");
+    static final BigDecimal FRAUD_AMOUNT = new BigDecimal("750000.00");
     static final BigDecimal FEE_RATE = new BigDecimal("0.001");
     static final BigDecimal FEE_MIN = new BigDecimal("15.00");
     static final BigDecimal FEE_MAX = new BigDecimal("75.00");
@@ -36,6 +37,17 @@ public class WirePaymentService {
     static final Pattern IBAN_SHAPE = Pattern.compile("^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$");
     static final Pattern DOMESTIC = Pattern.compile("^[0-9]{6,17}$");
 
+    /** Payment ids already seen by this running service (stage 2, duplicate check). */
+    private final Set<String> seen = new HashSet<String>();
+
+    /**
+     * The old way: ONE method that runs the checks one after another, top to bottom, in a fixed order.
+     * There is no workflow object and nothing is stored about how far a payment got: it either runs
+     * through to the end (ACCEPTED) or stops at the first failing check (REJECTED, with an error code).
+     * A payment that needs a manual fraud review cannot wait; it is rejected and must be re-submitted.
+     *
+     *   1 basic validation -> 2 duplicate check -> 3 fraud check -> 4 bank details check -> 5 posting
+     */
     public Map<String, String> process(Map<String, String> in) {
         LegacyPayment p = new LegacyPayment();
         LocalDate processing = parseDate(in.get("processingDate"), LocalDate.now());
@@ -55,12 +67,12 @@ public class WirePaymentService {
         p.setPaymentId("WP-" + requestId);
         p.setStatus("REJECTED");
 
+        // ---- 1. basic validation
         if (blank(requestId) || blank(debtorName) || blank(debtorAccount) || blank(creditorName)
                 || blank(creditorAccount) || blank(creditorBic) || blank(amountStr)
                 || blank(currency) || blank(valueDateStr)) {
             return reject(p, "E001", "Mandatory field missing");
         }
-
         BigDecimal amount;
         try {
             amount = new BigDecimal(amountStr).setScale(2, RoundingMode.HALF_UP);
@@ -76,10 +88,6 @@ public class WirePaymentService {
         if (!CURRENCIES.contains(currency)) {
             return reject(p, "E003", "Currency not supported");
         }
-        if (!BIC.matcher(creditorBic).matches()) {
-            return reject(p, "E004", "Creditor BIC invalid");
-        }
-
         LocalDate valueDate;
         try {
             valueDate = LocalDate.parse(valueDateStr);
@@ -89,10 +97,29 @@ public class WirePaymentService {
         if (valueDate.isBefore(processing)) {
             return reject(p, "E005", "Value date in the past");
         }
+
+        // ---- 2. duplicate check
+        if (!seen.add(requestId)) {
+            return reject(p, "E008", "Duplicate payment");
+        }
+
+        // ---- 3. fraud check (no hold: a flagged payment is simply rejected)
+        if (fraudFlagged(amount, creditorName)) {
+            return reject(p, "E009", "Fraud screening failed");
+        }
+
+        // ---- 4. bank details check
+        if (!BIC.matcher(creditorBic).matches()) {
+            return reject(p, "E004", "Creditor BIC invalid");
+        }
         if (!validAccount(debtorAccount) || !validAccount(creditorAccount)) {
             return reject(p, "E006", "Account number format invalid");
         }
 
+        // ---- 5. posting (fee, settlement date, ledger post)
+        if (debtorAccount.endsWith("0000")) {
+            return reject(p, "E010", "Posting failed: insufficient funds");
+        }
         if (blank(chargeBearer) || !(chargeBearer.equals("OUR") || chargeBearer.equals("BEN"))) {
             chargeBearer = "SHA";
         }
@@ -127,6 +154,11 @@ public class WirePaymentService {
         p.setChargeBearer(chargeBearer);
         p.setRemittanceInfo(cut(remittance, REMITTANCE_MAX));
         return toMap(p);
+    }
+
+    /** Fraud screening rule shared (by agreement) with the new service. */
+    static boolean fraudFlagged(BigDecimal amount, String creditorName) {
+        return amount.compareTo(FRAUD_AMOUNT) >= 0 || creditorName.toUpperCase().contains("OFFSHORE");
     }
 
     private static boolean validAccount(String a) {

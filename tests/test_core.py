@@ -43,20 +43,32 @@ def xml(amount="1000.00", ccy="USD", date_="2026-10-22", cb="SHAR", fee="15.00",
 </CdtTrfTxInf></FIToFICstmrCdtTrf></Document>"""
 
 
-HIST_OK = [{"seq": 1, "state": "RECEIVED"}, {"seq": 2, "state": "VALIDATED"}, {"seq": 3, "state": "ENRICHED"},
-           {"seq": 4, "state": "ACCEPTED"}]
+STAGES = ["RECEIVED", "BASIC_VALIDATION", "DUPLICATE_CHECK", "FRAUD_CHECK", "BANK_DETAILS_CHECK", "POSTING", "COMPLETED"]
+
+
+def hist(states=STAGES, status="DONE", last_status=None):
+    out = [{"seq": i, "state": st, "status": status} for i, st in enumerate(states, start=1)]
+    if last_status:
+        out[-1]["status"] = last_status
+    return out
+
+
+HIST_OK = hist()
+HIST_REJ = [{"seq": 1, "state": "RECEIVED", "status": "DONE"}, {"seq": 2, "state": "BASIC_VALIDATION", "status": "FAILED"},
+            {"seq": 3, "state": "REJECTED", "status": "DONE"}]
 
 
 def new_ok(xml_=None, hist=None, **kw):
+    hist_ = hist
     r = {"paymentId": "WP-T1", "status": "ACCP", "reasonCode": "", "uetr": "76356f8c-3b67-48d2-9d41-f2a3a91eb37b",
-         "workflow": {"finalState": "ACCEPTED", "history": hist or HIST_OK}, "pacs008": xml_ or xml()}
+         "workflow": {"finalState": "COMPLETED", "history": hist_ or HIST_OK}, "pacs008": xml_ or xml()}
     r.update(kw)
     return r
 
 
-def new_rej(code, hist=None):
+def new_rej(code, hist_=None):
     return {"paymentId": "WP-T1", "status": "RJCT", "reasonCode": code, "uetr": "",
-            "workflow": {"finalState": "REJECTED", "history": hist or [{"seq": 1, "state": "RECEIVED"}, {"seq": 2, "state": "REJECTED"}]},
+            "workflow": {"finalState": "REJECTED", "history": hist_ or HIST_REJ},
             "pacs008": ""}
 
 
@@ -133,7 +145,8 @@ def test_reason_codes_are_mapped_not_compared_literally():
 
 
 def test_illegal_workflow_transition_is_flagged():
-    bad = [{"seq": 1, "state": "RECEIVED"}, {"seq": 2, "state": "ACCEPTED"}]
+    bad = [{"seq": 1, "state": "RECEIVED", "status": "DONE"}, {"seq": 2, "state": "POSTING", "status": "DONE"},
+           {"seq": 3, "state": "COMPLETED", "status": "DONE"}]
     r = verdict(REQ, old_ok(), new_ok(hist=bad))
     assert any(c.rule_id == "N-005" and c.status == "MISMATCH" for c in r.checks)
 
@@ -213,3 +226,63 @@ def test_metrics_buckets_add_up():
     assert (m["match"], m["explained"], m["failure"], m["error"]) == (1, 1, 1, 1)
     assert m["success_pct"] == 50.0 and m["error_pct"] == 25.0
     assert round(m["match_pct"] + m["explained_pct"] + m["failure_pct"] + m["error_pct"], 1) == 100.0
+
+
+FRAUD_REQ = {**REQ, "creditorName": "Offshore Holdings Ltd"}
+FRAUD_OLD = {"paymentId": "WP-T1", "status": "REJECTED", "errorCode": "E009"}
+
+
+def new_pending(hist_=None, **kw):
+    r = {"paymentId": "WP-T1", "status": "PDNG", "reasonCode": "FRAD", "uetr": "",
+         "workflow": {"finalState": "FRAUD_CHECK", "resumeFrom": "FRAUD_CHECK",
+                      "history": hist_ or hist(STAGES[:4], last_status="PAUSED")}, "pacs008": ""}
+    r.update(kw)
+    return r
+
+
+def test_fraud_hold_is_an_explained_difference_not_a_mismatch():
+    r = verdict(FRAUD_REQ, FRAUD_OLD, new_pending())
+    assert r.verdict == "EXPECTED_DIFFERENCE" and [c.feature_id for c in r.expected] == ["N-007"]
+    assert any(c.rule_id == "N-007" and c.status == "MATCH" for c in r.checks)
+
+
+def test_hold_on_an_unflagged_payment_is_a_mismatch():
+    r = verdict(REQ, FRAUD_OLD, new_pending())
+    assert r.verdict == "MISMATCH" and any(c.rule_id == "M-001" for c in r.mismatches)
+
+
+def test_pause_that_cannot_be_resumed_is_flagged():
+    bad = new_pending()
+    bad["workflow"].pop("resumeFrom")
+    r = verdict(FRAUD_REQ, FRAUD_OLD, bad)
+    assert any(c.rule_id == "N-007" and c.status == "MISMATCH" for c in r.checks)
+
+
+RESUME_REQ = {**FRAUD_REQ, "resumeFrom": "FRAUD_CHECK", "fraudDecision": "RELEASE"}
+
+
+def resumed_hist(restored=("RECEIVED", "BASIC_VALIDATION", "DUPLICATE_CHECK")):
+    return [{"seq": i, "state": st, "status": "RESTORED" if st in restored else "DONE"} for i, st in enumerate(STAGES, start=1)]
+
+
+def test_resume_completes_where_old_code_could_only_reject():
+    old = {"paymentId": "WP-T1", "status": "REJECTED", "errorCode": "E008"}
+    r = verdict(RESUME_REQ, old, new_ok(hist=resumed_hist()))
+    assert r.verdict == "EXPECTED_DIFFERENCE" and r.expected[0].feature_id == "N-008"
+    assert any(c.rule_id == "N-008" and c.status == "MATCH" for c in r.checks)
+
+
+def test_resume_that_reruns_earlier_steps_is_flagged():
+    old = {"paymentId": "WP-T1", "status": "REJECTED", "errorCode": "E008"}
+    r = verdict(RESUME_REQ, old, new_ok(hist=resumed_hist(restored=("RECEIVED",))))
+    assert any(c.rule_id == "N-008" and c.status == "MISMATCH" for c in r.checks)
+
+
+def test_blocked_resume_after_duplicate_in_old_is_explained():
+    old = {"paymentId": "WP-T1", "status": "REJECTED", "errorCode": "E008"}
+    req = {**RESUME_REQ, "fraudDecision": "BLOCK"}
+    h = [{"seq": 1, "state": "RECEIVED", "status": "RESTORED"}, {"seq": 2, "state": "BASIC_VALIDATION", "status": "RESTORED"},
+         {"seq": 3, "state": "DUPLICATE_CHECK", "status": "RESTORED"}, {"seq": 4, "state": "FRAUD_CHECK", "status": "FAILED"},
+         {"seq": 5, "state": "REJECTED", "status": "DONE"}]
+    r = verdict(req, old, new_rej("FRAD", h))
+    assert r.verdict == "EXPECTED_DIFFERENCE" and r.expected[0].feature_id == "N-008"

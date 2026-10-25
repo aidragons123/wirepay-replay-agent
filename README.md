@@ -60,7 +60,7 @@ test data or data you are allowed to share. If your key is organisation-wide and
 ```
  recorded old traffic          new Java 18 code             compare, rule by rule           diagnose
  {request, response} x 1000 -> request -> JSON + pacs.008 -> 14 mapping rules          ->  patterns, not rows
- (JSONL or CSV)                                              + 6 new-feature checks         + suggested fix
+ (JSONL or CSV)                                              + 8 new-feature checks         + suggested fix
 ```
 
 Every payment gets one verdict:
@@ -99,6 +99,22 @@ Try it locally: `python3 demo/make_demo_repo.py /tmp/wire-demo` builds a repo wi
 `modern-fixed`; use that path as the repository. On Streamlit Community Cloud a local path does not exist, so push that
 repo to GitHub and use its https URL. See `demo/DEMO_GUIDE.md` for the demo script.
 
+## How the old and new services process a payment
+
+| Step | Old service (no workflow) | New service (workflow) |
+|---|---|---|
+| 1 Basic validation | mandatory fields, amount, currency, value date | same checks, recorded as step `BASIC_VALIDATION` |
+| 2 Duplicate check | same request id seen before: reject `E008` | step `DUPLICATE_CHECK`: reject `DUPL` |
+| 3 Fraud check | flagged payment is **rejected** `E009`; it cannot wait | flagged payment **pauses** at `FRAUD_CHECK` (status `PDNG`) |
+| 4 Bank details | BIC and account number checks (`E004`, `E006`) | step `BANK_DETAILS_CHECK`, plus the IBAN checksum |
+| 5 Posting | fee, settlement date, ledger post (`E010` no funds) | step `POSTING`, then `COMPLETED` with a pacs.008 message |
+
+The old service runs the checks inline, top to bottom, and stores nothing about how far a payment got. The new one
+records every step with a status (`DONE`, `FAILED`, `PAUSED`, `RESTORED`). A payment paused at the fraud step is
+continued by sending it again with `resumeFrom=FRAUD_CHECK` and `fraudDecision=RELEASE` or `BLOCK`: the earlier steps
+come back as `RESTORED` and are not run again. The old service can only treat the re-sent payment as a new one,
+which it rejects as a duplicate. Fraud rule used by both: amount of 750,000 or more, or a creditor name containing "OFFSHORE".
+
 ## The new features it checks
 
 | Id | New behaviour | How the agent treats it |
@@ -107,8 +123,10 @@ repo to GitHub and use its https URL. See `demo/DEMO_GUIDE.md` for the demo scri
 | N-002 | TARGET2 holiday-aware settlement date (EUR) | expected **only if** the date is a real closing day and the new date is the right next business day |
 | N-003 | Full-length names (35 → 140 chars) | expected only if old is exactly the 35-char prefix of new |
 | N-004 | UETR (UUIDv4) assigned | verified on every accepted payment |
-| N-005 | Workflow audit trail | verified: starts at RECEIVED, only legal transitions, ends in the state matching the decision |
+| N-005 | Workflow audit trail | verified: steps in order, each with a status, ending in the state that matches the decision |
 | N-006 | pacs.008 structurally complete | verified: all mandatory elements present |
+| N-007 | Fraud hold pauses at the fraud step | old rejected (E009), new holds: expected **only if** the independent fraud screen flags it; also verified that a held payment is resumable |
+| N-008 | Resume continues from the paused step | old cannot resume (E008/E009): expected **only if** earlier steps came back `RESTORED` and were not re-run |
 
 The expected-difference checks use code that never touches the new service (`wirepay_core/explain.py`), so a
 buggy new feature cannot excuse itself.
@@ -175,5 +193,5 @@ streamlit_app.py     UI              run_replay.py   CLI            agent.yaml  
 wirepay_core/        engine, store (history), diffing, gate, charts, shell + ui (the app)
   spec/mapping_rules.yaml           the rules
 java/old, java/new   stand-in services (Java 8 / Java 18)
-data/                recorded sample day (1,000 payments)           tests/       35 tests
+data/                recorded sample day (1,000 payments)           tests/       48 tests
 ```

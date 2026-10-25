@@ -17,7 +17,9 @@ public record PaymentRequest(
         String valueDate,
         String chargeBearer,
         String remittanceInfo,
-        LocalDate processingDate) {
+        LocalDate processingDate,
+        String resumeFrom,
+        String fraudDecision) {
 
     public static PaymentRequest from(Map<String, String> m) {
         return new PaymentRequest(
@@ -32,7 +34,9 @@ public record PaymentRequest(
                 t(m.get("valueDate")),
                 t(m.get("chargeBearer")),
                 t(m.get("remittanceInfo")),
-                date(m.get("processingDate")));
+                date(m.get("processingDate")),
+                t(m.get("resumeFrom")),
+                t(m.get("fraudDecision")));
     }
 
     public boolean hasAllMandatory() {

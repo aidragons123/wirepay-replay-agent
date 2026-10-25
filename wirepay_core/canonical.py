@@ -11,7 +11,7 @@ NS = {"p": "urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08"}
 @dataclass
 class Canon:
     side: str                              # "old" | "new"
-    decision: str                          # "ACCEPTED" | "REJECTED" | "UNKNOWN"
+    decision: str                          # "ACCEPTED" | "REJECTED" | "PENDING" (new code only) | "UNKNOWN"
     reason: str = ""
     raw_status: str = ""                   # status exactly as returned (ACCEPTED / ACCP ...)
     fields: dict[str, str] = field(default_factory=dict)
@@ -64,7 +64,7 @@ def _acct(root: ET.Element, tag: str) -> str:
 
 def canon_new(resp: dict[str, Any]) -> Canon:
     status = str(resp.get("status", "")).upper()
-    decision = {"ACCP": "ACCEPTED", "RJCT": "REJECTED"}.get(status, "UNKNOWN")
+    decision = {"ACCP": "ACCEPTED", "RJCT": "REJECTED", "PDNG": "PENDING"}.get(status, "UNKNOWN")
     c = Canon("new", decision, str(resp.get("reasonCode", "")), status,
               {"payment_id": str(resp.get("paymentId", ""))},
               uetr=str(resp.get("uetr", "")), workflow=resp.get("workflow") or {})

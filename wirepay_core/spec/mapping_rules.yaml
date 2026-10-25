@@ -22,6 +22,9 @@ reason_code_map:     # old error code -> ISO 20022 external status reason
   E005: DT01
   E006: AC01
   E007: AM02
+  E008: DUPL
+  E009: FRAD
+  E010: AM04
 
 charge_bearer_map:   # old charge bearer -> pacs.008 ChrgBr
   OUR: DEBT
@@ -52,5 +55,7 @@ new_features:
   - {id: N-002, title: TARGET2 holiday-aware settlement date (EUR),     kind: explains,  note: "Old code only skipped weekends. New code also skips TARGET2 closing days for EUR."}
   - {id: N-003, title: Full-length party names (up to 140 chars),       kind: explains,  note: "Old model truncated names to 35 characters. pacs.008 allows 140."}
   - {id: N-004, title: UETR assigned (UUIDv4 format),                   kind: verifies,  note: "Every accepted payment carries a well-formed unique end-to-end transaction reference."}
-  - {id: N-005, title: Workflow audit trail is legal and complete,      kind: verifies,  note: "History starts at RECEIVED, only uses allowed transitions, ends in the state matching the decision."}
+  - {id: N-005, title: Workflow audit trail is legal and complete,      kind: verifies,  note: "Steps run in order RECEIVED, BASIC_VALIDATION, DUPLICATE_CHECK, FRAUD_CHECK, BANK_DETAILS_CHECK, POSTING, COMPLETED (or end in REJECTED), each with a status, and the last step matches the decision. The old service had no workflow at all."}
   - {id: N-006, title: pacs.008 message is structurally complete,       kind: verifies,  note: "Required elements present and parseable. (Full XSD validation can be plugged in - see README.)"}
+  - {id: N-007, title: Fraud hold pauses at the fraud step,             kind: explains,  note: "Old code has no pause: a payment flagged by fraud screening is rejected (E009). New code holds it at FRAUD_CHECK (PDNG) so a reviewer can decide."}
+  - {id: N-008, title: Resume continues from the paused step,           kind: explains,  note: "Old code cannot resume: re-sending a held payment is rejected as a duplicate (E008) or re-flagged (E009). New code continues from FRAUD_CHECK and does not re-run the earlier steps."}

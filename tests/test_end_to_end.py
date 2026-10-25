@@ -77,6 +77,9 @@ EXPECTED_SCENARIO_VERDICTS = {
     "Special characters in names": "MATCH",
     "Over the payment limit": "MATCH",
     "Missing mandatory field": "MATCH",
+    "Fraud flag: new code holds, old rejects": "EXPECTED_DIFFERENCE",
+    "Resume a held payment (release)": "EXPECTED_DIFFERENCE",
+    "Insufficient funds at posting": "MATCH",
 }
 
 
@@ -120,3 +123,33 @@ def test_git_rejects_unsafe_input():
     for repo, ref in (("-oops", "main"), ("ext::sh -c id", "main"), ("/tmp/x", "--upload-pack=id"), ("/tmp/x", "a..b")):
         with pytest.raises(gitsource.GitError):
             gitsource.validate(gitsource.GitSpec(repo, ref, main_class="a.B"))
+
+
+def test_held_payment_resumes_from_the_fraud_step_and_old_code_cannot():
+    """Same payment sent twice: first it is held, then resumed. The old code rejects the second as a duplicate."""
+    old, new, _ = standin_adapters(ROOT, parity_fix=True)
+    first = scenario_request_for_fraud()
+    again = {**first, "resumeFrom": "FRAUD_CHECK", "fraudDecision": "RELEASE"}
+    run = run_dual([first, again], old, new, SPEC)
+    a, b = run.results
+    assert a.old_response["errorCode"] == "E009" and a.new_response["status"] == "PDNG"
+    assert b.old_response["errorCode"] == "E008" and b.new_response["status"] == "ACCP"
+    hist = {h["state"]: h["status"] for h in b.new_response["workflow"]["history"]}
+    assert hist["DUPLICATE_CHECK"] == "RESTORED" and hist["FRAUD_CHECK"] == "DONE" and hist["COMPLETED"] == "DONE"
+    assert run.counts["mismatch"] == 0
+
+
+def scenario_request_for_fraud():
+    from wirepay_core.generator import scenario_request
+    return scenario_request("Fraud flag: new code holds, old rejects", "2026-10-19")
+
+
+def test_old_and_new_stage_order_agree_on_duplicate_and_no_funds():
+    old, new, _ = standin_adapters(ROOT, parity_fix=True)
+    from wirepay_core.generator import scenario_request
+    ok = scenario_request("Clean USD payment", "2026-10-19")
+    broke = {**scenario_request("Insufficient funds at posting", "2026-10-19")}
+    run = run_dual([ok, dict(ok), broke], old, new, SPEC)
+    assert [r.old_response.get("errorCode", "") for r in run.results] == ["", "E008", "E010"]
+    assert [r.new_response["reasonCode"] for r in run.results] == ["", "DUPL", "AM04"]
+    assert run.counts["mismatch"] == 0

@@ -10,6 +10,7 @@ import streamlit as st
 
 from . import report
 from .brand import Agent
+from . import explain
 from .compare import RecordResult
 from .engine import RunResult
 
@@ -93,6 +94,8 @@ h1,h2,h3 {{ color:var(--ink); letter-spacing:-.01em; }}
 .step {{ display:inline-block; padding:.28rem .7rem; margin:0 .25rem .35rem 0; border-radius:8px; font-size:.84rem; font-weight:600; border:1px solid var(--line); background:#fff; color:var(--muted); }}
 .step.done {{ background:{GREEN_BG}; border-color:#A9D8BF; color:#0E4D31; }}
 .step.fail {{ background:{RED_BG}; border-color:#EDB5AE; color:#7C1F19; }}
+.step.paused {{ background:#FFF3DC; border-color:#E0922F; color:#7A4A07; }}
+.step.restored {{ background:#F1F3F6; border-style:dashed; color:#7B8798; }}
 .step.now {{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }}
 
 /* primary buttons carry the agent's accent */
@@ -176,7 +179,8 @@ def scorecard(m: dict[str, Any], base: dict[str, Any] | None = None) -> None:
         col.markdown(f'<div class="tile {cls}"><div class="v">{val}</div><div class="l">{label}</div>'
                      f'<div class="s">{sub}</div>{d}</div>', unsafe_allow_html=True)
     st.caption(f"Accepted — old service {m['old_accept_pct']}% · new service {m['new_accept_pct']}%   |   "
-               f"Rejected — old {m['old_reject_pct']}% · new {m['new_reject_pct']}%.  "
+               f"Rejected — old {m['old_reject_pct']}% · new {m['new_reject_pct']}% · "
+               f"held at the fraud step (new only) {m['new_pending_pct']}%.  "
                "Error = a service gave no accepted/rejected answer or its pacs.008 would not parse.")
 
 
@@ -216,12 +220,22 @@ def checks_df(r: RecordResult) -> pd.DataFrame:
 
 
 def workflow_stepper(history: list[dict[str, Any]]) -> None:
+    """One chip per step: green done, grey dashed restored (not re-run), amber paused, red failed or rejected."""
     if not history:
         return
-    states = [h.get("state", "?") for h in history]
-    html_ = "".join(f'<span class="step {"fail" if s == "REJECTED" else "done" if s in ("ACCEPTED",) else "now" if i == len(states) - 1 else ""}">{esc(s)}</span>'
-                    + ("<span style='color:#9AA6BC'>›</span> " if i < len(states) - 1 else "") for i, s in enumerate(states))
-    st.markdown(html_, unsafe_allow_html=True)
+    cls = {"DONE": "done", "RESTORED": "restored", "PAUSED": "paused", "FAILED": "fail"}
+    parts = []
+    for i, h in enumerate(history):
+        state, status = h.get("state", "?"), h.get("status", "")
+        c = "fail" if state == "REJECTED" else cls.get(status, "")
+        tip = esc(h.get("detail", ""))
+        label = esc(state.replace("_", " ").title()) + (f" · {esc(status.lower())}" if status and status != "DONE" else "")
+        parts.append(f'<span class="step {c}" title="{tip}">{label}</span>' + ("<span style='color:#9AA6BC'>›</span> " if i < len(history) - 1 else ""))
+    st.markdown("".join(parts), unsafe_allow_html=True)
+    if history and history[-1].get("status") == "PAUSED":
+        st.caption("Paused. Send the payment again with resumeFrom=FRAUD_CHECK and fraudDecision=RELEASE or BLOCK to continue from this step.")
+    if any(h.get("status") == "RESTORED" for h in history):
+        st.caption("Dashed steps were finished before the pause and are not run again.")
 
 
 def inspector(r: RecordResult, key: str, extra=None) -> None:
@@ -247,6 +261,11 @@ def inspector(r: RecordResult, key: str, extra=None) -> None:
     if wf:
         st.markdown("**New workflow path**")
         workflow_stepper(wf)
+        code = r.old_response.get("errorCode")
+        if code and r.old_response.get("status") == "REJECTED":
+            stage = explain.OLD_STAGE.get(code, "")
+            st.caption(f"Old code, no workflow: it ran the checks in order and stopped at "
+                       f"{stage.replace('_', ' ').lower() or 'an unknown step'} ({code}). Nothing was stored about how far it got.")
     xml = r.new_response.get("pacs008")
     with st.expander("Request sent to both"):
         st.json(r.request, expanded=2)

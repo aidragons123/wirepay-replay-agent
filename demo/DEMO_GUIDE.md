@@ -16,6 +16,17 @@ Two *running builds of the service*, never two source trees line by line.
    N-001..N-006 new features). Verdict per payment: match / explained difference / mismatch (plus technical error).
 6. **Gate.** GO / NO-GO from the rules. The AI never decides it.
 
+## The old and the new model in one picture
+- **Old (no workflow):** one method runs the checks in a fixed order: basic validation, duplicate, fraud, bank details,
+  posting. It stops at the first failure and stores nothing about how far a payment got. A fraud-flagged payment is rejected.
+- **New (workflow):** the same steps are named, each with a status (done, failed, paused, restored), and kept as an audit
+  trail. A fraud-flagged payment pauses at FRAUD_CHECK. Send it again with resumeFrom=FRAUD_CHECK and a decision
+  (RELEASE or BLOCK) and it continues from that step; the earlier steps are not run again.
+- **What the agent checks:** same decisions and fields wherever behaviour should be identical, and the workflow rules
+  N-005 (legal ordered steps), N-007 (a held payment can be resumed), N-008 (resume skips completed steps).
+- **Live example in the app:** Twin Run -> One payment -> "Fraud flag: new code holds, old rejects", then "Resume a held
+  payment (release)". Open Payments in a batch run to see the step chips (green done, amber paused, dashed restored).
+
 ## Where the AI helps (say this out loud)
 - Explains *why* a payment differs in plain English, using the payment, the rule and the new code.
 - Groups mismatches into patterns and suggests the code fix for each pattern.

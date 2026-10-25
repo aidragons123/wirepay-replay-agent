@@ -94,6 +94,21 @@ def _decision_check(rule: dict, req: dict, co: Canon, cn: Canon, spec: Spec) -> 
     expected_new = spec.decision_map.get(co.raw_status)
     if expected_new is not None and expected_new == cn.raw_status:
         return Check(status=MATCH, **base)
+    if cn.decision == "PENDING":
+        if explain.fraud_flag(req) and not explain.is_resume(req) and co.decision == "REJECTED" and co.reason == "E009":
+            return Check(status=EXPECTED, category=CAT_ENHANCEMENT, feature_id="N-007", **base,
+                         explanation="Fraud screening flags this payment (independently verified: amount of 750,000 or more, or an "
+                                     "offshore creditor). The old code has no pause, so it rejected the payment (E009). The new "
+                                     "workflow holds it at FRAUD_CHECK so a reviewer can release or block it.")
+        if not explain.fraud_flag(req):
+            return Check(status=MISMATCH, category=CAT_FEATURE, feature_id="N-007", **base,
+                         explanation="New code held this payment for fraud review but the fraud screen does not flag it.",
+                         fix="Check the fraud rule in the new FRAUD_CHECK step against the agreed rule.")
+    if explain.is_resume(req) and co.decision == "REJECTED" and cn.decision == "ACCEPTED" and co.reason in ("E008", "E009"):
+        return Check(status=EXPECTED, category=CAT_ENHANCEMENT, feature_id="N-008", **base,
+                     explanation="This request resumes a payment held at FRAUD_CHECK. The old code cannot resume, so it treated "
+                                 f"the re-sent payment as new and rejected it ({co.reason}). The new workflow continues from the "
+                                 "paused step and completes the payment.")
     if co.decision == "ACCEPTED" and cn.decision == "REJECTED":
         if cn.reason == "AC01":
             if explain.any_iban_invalid(req):
@@ -124,6 +139,10 @@ def _reason_check(rule: dict, req: dict, co: Canon, cn: Canon, spec: Spec) -> Ch
     expected_new = spec.reason_code_map.get(co.reason)
     if expected_new is not None and expected_new == cn.reason:
         return Check(status=MATCH, **base)
+    if explain.is_resume(req) and co.reason == "E008" and cn.reason == "FRAD":
+        return Check(status=EXPECTED, category=CAT_ENHANCEMENT, feature_id="N-008", **base,
+                     explanation="The reviewer blocked this held payment. The old code cannot resume, so the re-sent payment was "
+                                 "rejected as a duplicate (E008); the new workflow rejects it at FRAUD_CHECK (FRAD).")
     if cn.reason == "DT01" and _same_day(req):
         return Check(status=MISMATCH, category=CAT_DEFECT, **base,
                      explanation="New code rejects a same-day value date before it reaches the check that "
@@ -195,7 +214,7 @@ def _field_check(rule: dict, req: dict, co: Canon, cn: Canon, spec: Spec) -> Che
 def _new_feature_checks(req: dict, cn: Canon) -> list[Check]:
     out: list[Check] = []
 
-    # N-005 workflow audit trail (accepted and rejected payments)
+    # N-005 workflow audit trail (accepted, rejected and paused payments)
     wf = cn.workflow or {}
     hist = wf.get("history") or []
     problems: list[str] = []
@@ -203,7 +222,7 @@ def _new_feature_checks(req: dict, cn: Canon) -> list[Check]:
         problems.append("history is empty")
     else:
         if hist[0].get("state") != "RECEIVED":
-            problems.append("first state is not RECEIVED")
+            problems.append("first step is not RECEIVED")
         for i, step in enumerate(hist, start=1):
             if step.get("seq") != i:
                 problems.append(f"step {i} has seq {step.get('seq')}")
@@ -213,16 +232,40 @@ def _new_feature_checks(req: dict, cn: Canon) -> list[Check]:
                 problems.append(f"illegal transition {a.get('state')} -> {b.get('state')}")
                 break
         final = hist[-1].get("state")
-        want = {"ACCEPTED": "ACCEPTED", "REJECTED": "REJECTED"}.get(cn.decision)
+        want = {"ACCEPTED": "COMPLETED", "REJECTED": "REJECTED", "PENDING": "FRAUD_CHECK"}.get(cn.decision)
         if wf.get("finalState") != final:
-            problems.append("finalState does not equal last history state")
+            problems.append("finalState does not equal the last step")
         if want and final != want:
-            problems.append(f"decision is {cn.decision} but workflow ends in {final}")
+            problems.append(f"decision is {cn.decision} but the workflow ends at {final}")
+        if any(not h.get("status") for h in hist):
+            problems.append("a step has no status")
     out.append(Check("N-005", "Workflow audit trail", MISMATCH if problems else MATCH,
                      new=" → ".join(s.get("state", "?") for s in hist),
                      category=CAT_FEATURE if problems else "", feature_id="N-005",
                      explanation="; ".join(problems),
                      fix="Fix the workflow engine so every payment records a legal, complete path." if problems else ""))
+
+    # N-007 a held payment is really paused at the fraud step and says where to resume
+    if cn.decision == "PENDING":
+        last = hist[-1] if hist else {}
+        bad = [] if (last.get("state") == "FRAUD_CHECK" and last.get("status") == "PAUSED"
+                     and wf.get("resumeFrom") == "FRAUD_CHECK") else \
+            ["a held payment must end at FRAUD_CHECK with status PAUSED and tell the caller resumeFrom=FRAUD_CHECK"]
+        out.append(Check("N-007", "Held payment can be resumed", MISMATCH if bad else MATCH, new="paused at FRAUD_CHECK" if not bad else "not resumable",
+                         category=CAT_FEATURE if bad else "", feature_id="N-007", explanation="; ".join(bad),
+                         fix="Pause at FRAUD_CHECK and return resumeFrom." if bad else ""))
+
+    # N-008 a resumed payment continues from the fraud step and does not re-run what was already done
+    if explain.is_resume(req) and any(h.get("state") == "FRAUD_CHECK" for h in hist):
+        st = {h.get("state"): h.get("status") for h in hist}
+        bad = [f"{k} was {st.get(k)} instead of RESTORED" for k in ("RECEIVED", "BASIC_VALIDATION", "DUPLICATE_CHECK")
+               if st.get(k) != "RESTORED"]
+        if st.get("FRAUD_CHECK") not in ("DONE", "FAILED"):
+            bad.append(f"FRAUD_CHECK ended {st.get('FRAUD_CHECK')}, expected a decision")
+        out.append(Check("N-008", "Resume skips completed steps", MISMATCH if bad else MATCH,
+                         new="continued from FRAUD_CHECK" if not bad else "; ".join(bad),
+                         category=CAT_FEATURE if bad else "", feature_id="N-008", explanation="; ".join(bad),
+                         fix="On resume, restore earlier steps without running them again." if bad else ""))
 
     if cn.decision == "ACCEPTED":
         ok_uetr = bool(explain.UETR_RE.match(cn.uetr or ""))

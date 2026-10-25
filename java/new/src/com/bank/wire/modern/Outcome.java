@@ -20,7 +20,10 @@ public sealed interface Outcome permits Outcome.Valid, Outcome.Invalid {
         CURRENCY("AM03", "Currency not supported"),
         CREDITOR_BIC("RC01", "Creditor agent BIC invalid"),
         VALUE_DATE("DT01", "Value date invalid or not allowed"),
-        ACCOUNT("AC01", "Account number incorrect");
+        ACCOUNT("AC01", "Account number incorrect"),
+        DUPLICATE("DUPL", "Duplicate payment"),
+        FRAUD("FRAD", "Fraudulent origin suspected"),
+        NO_FUNDS("AM04", "Insufficient funds at posting");
 
         private final String code;
         private final String text;

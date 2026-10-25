@@ -16,13 +16,29 @@ FEE_RATE, FEE_MIN, FEE_MAX, OUR_SURCHARGE = Decimal("0.001"), Decimal("15.00"), 
 CENT = Decimal("0.01")
 NAME_LIMIT_OLD = 35
 
-ALLOWED_TRANSITIONS = {
-    "RECEIVED": {"VALIDATED", "REJECTED"},
-    "VALIDATED": {"ENRICHED", "REJECTED"},
-    "ENRICHED": {"ACCEPTED", "REJECTED"},
-    "ACCEPTED": set(),
-    "REJECTED": set(),
-}
+STAGES = ["RECEIVED", "BASIC_VALIDATION", "DUPLICATE_CHECK", "FRAUD_CHECK", "BANK_DETAILS_CHECK", "POSTING", "COMPLETED"]
+ALLOWED_TRANSITIONS = {st: {STAGES[i + 1], "REJECTED"} for i, st in enumerate(STAGES[:-1])}
+ALLOWED_TRANSITIONS.update({"COMPLETED": set(), "REJECTED": set()})
+
+FRAUD_AMOUNT = Decimal("750000.00")
+
+# which processing step produces each rejection (old error codes / new ISO reasons)
+OLD_STAGE = {"E001": "BASIC_VALIDATION", "E002": "BASIC_VALIDATION", "E003": "BASIC_VALIDATION", "E005": "BASIC_VALIDATION",
+             "E007": "BASIC_VALIDATION", "E008": "DUPLICATE_CHECK", "E009": "FRAUD_CHECK", "E004": "BANK_DETAILS_CHECK",
+             "E006": "BANK_DETAILS_CHECK", "E010": "POSTING"}
+
+
+def fraud_flag(req: dict) -> bool:
+    """The agreed fraud screen: a very large amount, or an 'offshore' creditor."""
+    try:
+        big = Decimal(str(req.get("amount", "")).strip()) >= FRAUD_AMOUNT
+    except Exception:
+        big = False
+    return big or "OFFSHORE" in str(req.get("creditorName", "")).upper()
+
+
+def is_resume(req: dict) -> bool:
+    return str(req.get("resumeFrom", "")).strip() == "FRAUD_CHECK"
 
 
 def is_iban_shaped(a: str) -> bool:

@@ -38,6 +38,7 @@ def compute(results: list) -> dict[str, Any]:
         "match_pct": _pct(match, total), "explained_pct": _pct(expl, total), "failure_pct": _pct(fail, total),
         "error_pct": _pct(len(err), total), "success_pct": _pct(match + expl, total),
         "old_accept_pct": _pct(old_acc, total), "new_accept_pct": _pct(new_acc, total),
+        "new_pending_pct": _pct(sum(1 for r in results if canon_new(r.new_response).decision == "PENDING"), total),
         "old_reject_pct": _pct(sum(1 for r in results if canon_old(r.old_response).decision == "REJECTED"), total),
         "new_reject_pct": _pct(sum(1 for r in results if canon_new(r.new_response).decision == "REJECTED"), total),
     }
